@@ -6,38 +6,80 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 3. Path Variable Hardening (Helpers)
-    function isValidId(id) { 
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
-    }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
-    function isSignedIn() { return request.auth != null; }
-    
-    // Pillar 2: Validation Blueprint (The "Anti-Update-Gap")
-    function isValidLead(data) {
-      return data.userId == request.auth.uid &&
-             data.businessName is string && data.businessName.size() <= 200 &&
-             data.websiteUrl is string && data.websiteUrl.size() <= 300 &&
-             (data.keys().hasAll(['userId', 'businessName', 'websiteUrl', 'createdAt', 'updatedAt']));
+    // Phase 3: Primitives
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    match /leads/{leadId} {
-      // Pillar 3: ID validation
-      allow create: if isSignedIn() && isValidLead(incoming()) && incoming().userId == request.auth.uid && isValidId(leadId);
-      
-      // Pillar 1/4: Identity logic
-      allow get, delete: if isSignedIn() && existing().userId == request.auth.uid;
-      
-      // Pillar 8: Secure List Queries (No blanket reads)
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      
-      allow update: if isSignedIn() && 
-                      existing().userId == request.auth.uid &&
-                      isValidLead(incoming()) &&
-                      incoming().userId == existing().userId &&
-                      incoming().createdAt == existing().createdAt &&
-                      incoming().updatedAt == request.time;
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Phase 4: Validation Blueprints
+    function isValidLead(data) {
+      return data.keys().hasAll(['businessName', 'userId', 'createdAt'])
+        && data.businessName is string && data.businessName.size() <= 128
+        && data.userId == request.auth.uid
+        && data.createdAt == request.time
+        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 512))
+        && (!('industry' in data) || (data.industry is string && data.industry.size() <= 128))
+        && (!('email' in data) || (data.email is string && data.email.size() <= 128))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+        && (!('opportunityScore' in data) || (data.opportunityScore is number && data.opportunityScore >= 0 && data.opportunityScore <= 10))
+        && (!('websiteIssues' in data) || (data.websiteIssues is list && data.websiteIssues.size() <= 20));
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['email', 'createdAt'])
+        && data.email == request.auth.token.email
+        && data.createdAt == request.time
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128));
+    }
+
+    // Collections
+    match /users/{userId} {
+      // User private path
+      match /private/profile {
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidProfile(incoming());
+        allow update: if isOwner(userId) 
+          && incoming().email == existing().email
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])
+          && (incoming().updatedAt == request.time);
+      }
+
+      // User leads
+      match /leads/{leadId} {
+        allow list, get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(leadId) && isValidLead(incoming());
+        allow update: if isOwner(userId) 
+          && isValidLead(incoming())
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          // Prevent ghost fields and ensure only specific fields are updated
+          && (
+            // Action: Edit Lead
+            incoming().diff(existing()).affectedKeys().hasAll(['updatedAt'])
+          );
+        allow delete: if isOwner(userId);
+      }
     }
   }
 }

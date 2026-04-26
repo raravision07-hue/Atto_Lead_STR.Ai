@@ -27,7 +27,9 @@ import {
   MessageSquare,
   MoreVertical,
   Trash2,
-  Edit2
+  Edit2,
+  LogOut,
+  LogIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -41,23 +43,64 @@ import {
 } from 'docx';
 import { searchLeads, generatePitch, Lead } from './services/leadService';
 import { auth, db } from './lib/firebase';
-import { 
-  onAuthStateChanged, 
-  User as FirebaseUser 
-} from 'firebase/auth';
+import { useAuth } from './contexts/AuthContext';
 import { 
   collection, 
-  query, 
-  where, 
-  onSnapshot, 
   addDoc, 
   deleteDoc, 
   doc, 
-  serverTimestamp, 
-  setDoc,
-  orderBy
+  onSnapshot, 
+  query, 
+  orderBy, 
+  serverTimestamp 
 } from 'firebase/firestore';
-import { Auth, UserProfile } from './components/Auth';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 const getTwitterIcon = (size = 14) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -66,9 +109,7 @@ const getTwitterIcon = (size = 14) => (
 );
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
+  const { user, loading: authLoading, signIn, logout } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState({ niche: 'Dentists', location: 'Austin, TX' });
@@ -81,75 +122,54 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<'doc' | 'csv'>('doc');
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
-  // Auth Listener
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthReady(true);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Firestore Sync for CRM leads
+  // Load leads from Firestore when user changes
   useEffect(() => {
     if (!user) {
       setStoredLeads([]);
       return;
     }
 
-    const q = query(
-      collection(db, 'leads'), 
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
+    const path = `users/${user.uid}/leads`;
+    const q = query(collection(db, path), orderBy('createdAt', 'desc'));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id
+      const fetchedLeads = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
       }));
-      setStoredLeads(docs);
+      setStoredLeads(fetchedLeads);
     }, (error) => {
-      console.error("Firestore Error:", error);
-      setErrorStatus("Failed to sync leads with database. Please check permissions.");
+      handleFirestoreError(error, OperationType.LIST, path);
     });
 
     return () => unsubscribe();
   }, [user]);
 
   const handleAddLead = async (newLead: any) => {
-    if (!user) {
-      setShowAuthModal(true);
-      return;
-    }
-    
+    if (!user) return;
+    const path = `users/${user.uid}/leads`;
     try {
-      const leadData = {
+      await addDoc(collection(db, path), {
         ...newLead,
         userId: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      };
-      
-      // Remove local ID if it exists and let Firestore generate it
-      delete leadData.id;
-      
-      await addDoc(collection(db, 'leads'), leadData);
-    } catch (err: any) {
-      console.error("Failed to add lead:", err);
-      setErrorStatus("Failed to save lead to database.");
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
     }
   };
 
   const handleDeleteLead = async (id: string) => {
     if (!user) return;
+    const path = `users/${user.uid}/leads/${id}`;
     try {
-      await deleteDoc(doc(db, 'leads', id));
-    } catch (err) {
-      console.error("Failed to delete lead:", err);
-      setErrorStatus("Failed to remove lead from database.");
+      await deleteDoc(doc(db, 'users', user.uid, 'leads', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
     }
   };
+
   const [pitch, setPitch] = useState<string | null>(null);
   const [generatingPitch, setGeneratingPitch] = useState(false);
 
@@ -347,6 +367,75 @@ export default function App() {
     { name: "Insecure Direct Object References", desc: "Exposing internal implementation objects to users without access checking.", risk: "High" }
   ];
 
+  if (authLoading) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-white space-y-4">
+        <Loader2 className="w-12 h-12 text-black animate-spin" />
+        <p className="text-xs font-black uppercase tracking-widest animate-pulse">Initializing Systems...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="h-screen w-full flex bg-[#F8F9FA] relative overflow-hidden">
+        {/* Background Accents */}
+        <div className="absolute top-0 right-0 w-1/2 h-full bg-black/5 blur-3xl -mr-64 -mt-64 rounded-full" />
+        <div className="absolute bottom-0 left-0 w-1/2 h-full bg-emerald-500/5 blur-3xl -ml-64 -mb-64 rounded-full" />
+
+        <div className="flex-1 flex flex-col items-center justify-center px-4 z-10">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md bg-white p-10 rounded-[2.5rem] shadow-2xl border border-gray-100 text-center"
+          >
+            <div className="flex justify-center mb-8">
+              <div className="w-20 h-20 bg-black rounded-3xl flex items-center justify-center shadow-2xl shadow-black/20">
+                <TrendingUp className="text-white w-10 h-10" />
+              </div>
+            </div>
+            
+            <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">LeadFlow AI</h1>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Web Audit & CRM Engine</p>
+
+            <div className="space-y-4 mb-10">
+              <div className="flex items-start gap-4 text-left p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                <div className="w-8 h-8 bg-black/5 rounded-lg flex items-center justify-center shrink-0">
+                  <Search size={16} className="text-black" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm">Deep Audit Engine</h4>
+                  <p className="text-[11px] text-gray-500 font-medium">Find high-opportunity WordPress leads instantly.</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-4 text-left p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                <div className="w-8 h-8 bg-black/5 rounded-lg flex items-center justify-center shrink-0">
+                  <Briefcase size={16} className="text-black" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm">Personal CRM</h4>
+                  <p className="text-[11px] text-gray-500 font-medium">Each user gets their own private workspace.</p>
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => signIn()}
+              className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-2xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+            >
+              <LogIn size={18} />
+              Continue with Google
+            </button>
+
+            <p className="mt-8 text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
+              A private tool for professional web developers
+            </p>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-[#F8F9FA] font-sans text-gray-900 overflow-hidden relative">
       {/* Sidebar Mobile Overlay */}
@@ -390,37 +479,42 @@ export default function App() {
         <div className="p-6 border-t border-gray-100 space-y-6">
           {/* Personal Profile Section */}
           <div className="space-y-4">
-            {user ? (
-              <UserProfile user={user} />
-            ) : (
-              <button 
-                onClick={() => setShowAuthModal(true)}
-                className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-[10px] rounded-2xl shadow-xl hover:bg-gray-800 transition-all active:scale-95 flex items-center justify-center gap-2"
-              >
-                <Lock size={14} /> Sign In
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-black overflow-hidden flex items-center justify-center text-white font-black text-xs border-2 border-gray-100 shadow-sm">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || ''} referrerPolicy="no-referrer" />
+                ) : (
+                  user.displayName?.charAt(0) || 'U'
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-black text-gray-900 leading-none truncate">{user.displayName || 'Anonymous'}</p>
+                <p className="text-[10px] font-bold text-emerald-500 uppercase mt-1">Verified User</p>
+              </div>
+            </div>
             
-            <div className="flex gap-3 px-1">
-              <a href="https://www.facebook.com/profile.php?id=61586575149744" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
-                <Facebook size={16} />
-              </a>
-              <a href="https://www.instagram.com/strahmed7/" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
-                <Instagram size={16} />
-              </a>
-              <a href="https://www.tiktok.com/@strrobin1" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-black transition-colors">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1.04-.1z"/>
-                </svg>
-              </a>
+            <div className="flex items-center justify-between">
+              <div className="flex gap-3 px-1">
+                <a href="https://www.facebook.com/profile.php?id=61586575149744" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
+                  <Facebook size={16} />
+                </a>
+                <a href="https://www.instagram.com/strahmed7/" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
+                  <Instagram size={16} />
+                </a>
+              </div>
+              <button 
+                onClick={logout}
+                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                title="Logout"
+              >
+                <LogOut size={16} />
+              </button>
             </div>
           </div>
 
           <NavItem icon={<Settings size={18} />} label="Settings" onClick={() => {}} />
         </div>
       </aside>
-
-      {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden w-full">
@@ -969,39 +1063,29 @@ export default function App() {
                             </button>
                             <pre className="text-[11px] font-medium text-gray-600 whitespace-pre-wrap leading-relaxed font-sans">{pitch}</pre>
                          </div>
-                         {pitch && (
-                           <button 
-                            onClick={async () => {
-                              if (!user) {
-                                setShowAuthModal(true);
-                                return;
-                              }
-                              try {
-                                await addDoc(collection(db, 'leads'), {
-                                  businessName: selectedLead.businessName || 'Untitled',
-                                  websiteUrl: selectedLead.websiteUrl || '',
-                                  email: selectedLead.email || '',
-                                  phone: selectedLead.phone || '',
-                                  websiteIssues: selectedLead.websiteIssues || [],
-                                  opportunityScore: selectedLead.opportunityScore || 0,
-                                  cms: selectedLead.cms || 'WordPress',
-                                  details: pitch,
-                                  userId: user.uid,
-                                  createdAt: serverTimestamp(),
-                                  updatedAt: serverTimestamp()
-                                });
-                                setErrorStatus(null);
-                                // Optional: alert success
-                              } catch (err) {
-                                console.error("Sync error:", err);
-                                setErrorStatus("Failed to sync to CRM.");
-                              }
-                            }}
-                            className="w-full py-4 bg-emerald-500 text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-lg hover:bg-emerald-600 transition-all"
-                           >
-                              SYNC TO CRM
-                           </button>
-                         )}
+                         <button 
+                           onClick={() => {
+                             handleAddLead({
+                               title: selectedLead.businessName,
+                               companyName: selectedLead.businessName,
+                               website: selectedLead.websiteUrl,
+                               industry: selectedLead.industry,
+                               email: selectedLead.email,
+                               phone: selectedLead.phone,
+                               facebook: selectedLead.socialMedia?.facebook,
+                               linkedin: selectedLead.socialMedia?.linkedin,
+                               instagram: selectedLead.socialMedia?.instagram,
+                               opportunityScore: selectedLead.opportunityScore,
+                               cms: selectedLead.cms,
+                               status: 'New'
+                             });
+                             setActiveTab('all-leads');
+                             setSelectedLead(null);
+                           }}
+                           className="w-full py-4 bg-emerald-500 text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-lg hover:bg-emerald-600 transition-all"
+                         >
+                            SYNC TO CRM
+                         </button>
                          <button 
                           onClick={() => setPitch(null)}
                           className="w-full py-2 text-gray-400 font-bold text-[10px] uppercase hover:text-gray-900 transition-colors"
