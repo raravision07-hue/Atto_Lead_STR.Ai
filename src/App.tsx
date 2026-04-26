@@ -58,6 +58,7 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [selectedLeadsToExport, setSelectedLeadsToExport] = useState<string[]>([]);
   const [exportFormat, setExportFormat] = useState<'doc' | 'csv'>('doc');
+  const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
   // Load leads from localStorage on mount
   useEffect(() => {
@@ -89,16 +90,33 @@ export default function App() {
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setLoading(true);
-    const newLeads = await searchLeads(searchQuery.niche, searchQuery.location);
-    setLeads(prev => [...newLeads, ...prev]);
-    setLoading(false);
+    setErrorStatus(null);
+    try {
+      const newLeads = await searchLeads(searchQuery.niche, searchQuery.location);
+      if (newLeads.length === 0) {
+        setErrorStatus("No leads found for the specified niche/location. Try different terms.");
+      }
+      setLeads(prev => [...newLeads, ...prev]);
+    } catch (err: any) {
+      console.error("Search failed:", err);
+      setErrorStatus(err.message || "Failed to search for leads. Please check your internet connection or API settings.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGeneratePitch = async (lead: Lead) => {
     setGeneratingPitch(true);
-    const result = await generatePitch(lead);
-    setPitch(result);
-    setGeneratingPitch(false);
+    setErrorStatus(null);
+    try {
+      const result = await generatePitch(lead);
+      setPitch(result);
+    } catch (err: any) {
+      console.error("Pitch generation failed:", err);
+      setErrorStatus(err.message || "Failed to generate pitch. Try again.");
+    } finally {
+      setGeneratingPitch(false);
+    }
   };
 
   const getScoreColor = (score: number) => {
@@ -366,6 +384,31 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {/* Error Notification */}
+        <AnimatePresence>
+          {errorStatus && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-red-50 border-b border-red-100 overflow-hidden"
+            >
+              <div className="px-8 py-3 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 text-red-700">
+                  <AlertTriangle size={16} />
+                  <p className="text-sm font-medium">{errorStatus}</p>
+                </div>
+                <button 
+                  onClick={() => setErrorStatus(null)}
+                  className="p-1 hover:bg-red-100 rounded-md text-red-400 group"
+                >
+                  <Plus size={16} className="rotate-45" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Scrollable Area */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">

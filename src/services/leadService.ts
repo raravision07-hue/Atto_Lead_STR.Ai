@@ -2,6 +2,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
 
+if (!process.env.GEMINI_API_KEY) {
+  console.error("CRITICAL: GEMINI_API_KEY is not defined in the environment. Lead generation will fail.");
+}
+
 export interface Lead {
   id: string;
   businessName: string;
@@ -83,9 +87,11 @@ export async function searchLeads(niche: string, location: string, count: number
       ...l,
       id: Math.random().toString(36).substr(2, 9)
     }));
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error searching leads:", error);
-    return [];
+    const errorMsg = error?.message || "Unknown error occurred while searching leads.";
+    console.error("Gemini API Error details:", errorMsg);
+    throw new Error(errorMsg);
   }
 }
 
@@ -109,8 +115,9 @@ export async function generatePitch(lead: Lead): Promise<string> {
       contents: prompt,
     });
     return response.text || "Failed to generate pitch.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error generating pitch:", error);
-    return "Error generating pitch.";
+    const errorMsg = error?.message || "Unknown error occurred while generating pitch.";
+    throw new Error(errorMsg);
   }
 }
