@@ -33,16 +33,26 @@ service cloud.firestore {
 
     // Phase 4: Validation Blueprints
     function isValidLead(data) {
-      return data.keys().hasAll(['businessName', 'userId', 'createdAt'])
-        && data.businessName is string && data.businessName.size() <= 128
+      return data.keys().hasAll(['companyName', 'userId', 'createdAt'])
+        && data.companyName is string && data.companyName.size() <= 256
         && data.userId == request.auth.uid
         && data.createdAt == request.time
-        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 512))
+        && (!('title' in data) || (data.title is string && data.title.size() <= 256))
+        && (!('website' in data) || (data.website is string && data.website.size() <= 512))
         && (!('industry' in data) || (data.industry is string && data.industry.size() <= 128))
         && (!('email' in data) || (data.email is string && data.email.size() <= 128))
-        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
-        && (!('opportunityScore' in data) || (data.opportunityScore is number && data.opportunityScore >= 0 && data.opportunityScore <= 10))
-        && (!('websiteIssues' in data) || (data.websiteIssues is list && data.websiteIssues.size() <= 20));
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 64))
+        && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 64))
+        && (!('facebook' in data) || (data.facebook is string && data.facebook.size() <= 512))
+        && (!('linkedin' in data) || (data.linkedin is string && data.linkedin.size() <= 512))
+        && (!('instagram' in data) || (data.instagram is string && data.instagram.size() <= 512))
+        && (!('twitter' in data) || (data.twitter is string && data.twitter.size() <= 512))
+        && (!('projectType' in data) || (data.projectType is string && data.projectType.size() <= 128))
+        && (!('clientManager' in data) || (data.clientManager is string && data.clientManager.size() <= 128))
+        && (!('processingWork' in data) || (data.processingWork is string && data.processingWork.size() <= 5000))
+        && (!('opportunityScore' in data) || (data.opportunityScore is number))
+        && (!('cms' in data) || (data.cms is string && data.cms.size() <= 128))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 64));
     }
 
     function isValidProfile(data) {
@@ -70,13 +80,17 @@ service cloud.firestore {
         allow list, get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidId(leadId) && isValidLead(incoming());
         allow update: if isOwner(userId) 
-          && isValidLead(incoming())
           && incoming().userId == existing().userId
           && incoming().createdAt == existing().createdAt
-          // Prevent ghost fields and ensure only specific fields are updated
           && (
-            // Action: Edit Lead
-            incoming().diff(existing()).affectedKeys().hasAll(['updatedAt'])
+            // Action: Edit Any Lead Field
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'companyName', 'website', 'industry', 'email', 'phone', 
+              'whatsapp', 'facebook', 'linkedin', 'instagram', 'twitter', 
+              'projectType', 'clientManager', 'processingWork', 'opportunityScore', 
+              'cms', 'status', 'updatedAt'
+            ])
+            && (incoming().updatedAt == request.time)
           );
         allow delete: if isOwner(userId);
       }

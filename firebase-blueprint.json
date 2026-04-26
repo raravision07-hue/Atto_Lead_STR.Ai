@@ -2,35 +2,32 @@
   "entities": {
     "Lead": {
       "title": "Lead",
-      "description": "A business lead found or added by the user.",
+      "description": "A business lead with CRM details.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "businessName": { "type": "string" },
-        "websiteUrl": { "type": "string" },
+        "title": { "type": "string" },
+        "companyName": { "type": "string" },
+        "website": { "type": "string" },
         "industry": { "type": "string" },
         "email": { "type": "string" },
         "phone": { "type": "string" },
-        "socialMedia": {
-          "type": "object",
-          "properties": {
-            "facebook": { "type": "string" },
-            "linkedin": { "type": "string" },
-            "instagram": { "type": "string" }
-          }
-        },
-        "websiteIssues": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
+        "whatsapp": { "type": "string" },
+        "facebook": { "type": "string" },
+        "linkedin": { "type": "string" },
+        "instagram": { "type": "string" },
+        "twitter": { "type": "string" },
+        "projectType": { "type": "string" },
+        "clientManager": { "type": "string" },
+        "processingWork": { "type": "string" },
         "opportunityScore": { "type": "number" },
         "cms": { "type": "string" },
-        "details": { "type": "string" },
+        "status": { "type": "string" },
         "userId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["businessName", "userId", "createdAt"]
+      "required": ["companyName", "userId", "createdAt"]
     },
     "UserProfile": {
       "title": "User Profile",

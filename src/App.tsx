@@ -52,7 +52,8 @@ import {
   onSnapshot, 
   query, 
   orderBy, 
-  serverTimestamp 
+  serverTimestamp,
+  updateDoc 
 } from 'firebase/firestore';
 
 enum OperationType {
@@ -119,7 +120,8 @@ export default function App() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [selectedLeadsToExport, setSelectedLeadsToExport] = useState<string[]>([]);
-  const [exportFormat, setExportFormat] = useState<'doc' | 'csv'>('doc');
+  const [exportFormat, setExportFormat] = useState<'doc' | 'csv' | 'json' | 'txt'>('doc');
+  const [editingLead, setEditingLead] = useState<any | null>(null);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
   // Load leads from Firestore when user changes
@@ -149,14 +151,39 @@ export default function App() {
     if (!user) return;
     const path = `users/${user.uid}/leads`;
     try {
-      await addDoc(collection(db, path), {
-        ...newLead,
-        userId: user.uid,
-        createdAt: serverTimestamp(),
+      if (newLead.id && storedLeads.some(l => l.id === newLead.id)) {
+        // Update existing
+        const { id, ...updateData } = newLead;
+        await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
+          ...updateData,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        // Create new
+        const { id: _, ...createData } = newLead;
+        await addDoc(collection(db, path), {
+          ...createData,
+          userId: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const handleUpdateLead = async (updatedLead: any) => {
+    if (!user) return;
+    const path = `users/${user.uid}/leads/${updatedLead.id}`;
+    try {
+      const { id, ...data } = updatedLead;
+      await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
+        ...data,
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      handleFirestoreError(error, OperationType.UPDATE, path);
     }
   };
 
@@ -324,7 +351,7 @@ export default function App() {
 
     const leadsToExport = storedLeads.filter(l => selectedLeadsToExport.includes(l.id));
     
-    const headers = ["Company Name", "Email", "Phone", "Website", "Industry", "Opportunity Score", "CMS", "Facebook", "LinkedIn", "Instagram", "X (Twitter)"];
+    const headers = ["Company Name", "Email", "Phone", "Website", "Industry", "Opportunity Score", "CMS", "Facebook", "LinkedIn", "Instagram", "X (Twitter)", "Project Type", "Client Manager", "Notes"];
     const rows = leadsToExport.map(l => [
       l.companyName || l.title || "N/A",
       l.email || "N/A",
@@ -336,7 +363,10 @@ export default function App() {
       l.facebook || "N/A",
       l.linkedin || "N/A",
       l.instagram || "N/A",
-      l.twitter || "N/A"
+      l.twitter || "N/A",
+      l.projectType || "N/A",
+      l.clientManager || "N/A",
+      l.processingWork || "N/A"
     ]);
 
     const csvContent = [
@@ -348,12 +378,57 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `CRM_Leads_Export_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `LeadFlow_Export_${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
+    setIsExportModalOpen(false);
+    setSelectedLeadsToExport([]);
+  };
+
+  const handleExportJSON = () => {
+    if (selectedLeadsToExport.length === 0) return;
+    const leadsToExport = storedLeads.filter(l => selectedLeadsToExport.includes(l.id));
+    const jsonString = JSON.stringify(leadsToExport, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `LeadFlow_Export_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setIsExportModalOpen(false);
+    setSelectedLeadsToExport([]);
+  };
+
+  const handleExportTXT = () => {
+    if (selectedLeadsToExport.length === 0) return;
+    const leadsToExport = storedLeads.filter(l => selectedLeadsToExport.includes(l.id));
+    const txtContent = leadsToExport.map(l => {
+      return `--- ${l.companyName || l.title} ---
+Email: ${l.email || 'N/A'}
+Phone: ${l.phone || 'N/A'}
+Website: ${l.website || 'N/A'}
+CMS: ${l.cms || 'N/A'}
+Opportunity: ${l.opportunityScore || 'N/A'}
+Socials: FB: ${l.facebook || '-'}, LI: ${l.linkedin || '-'}, IG: ${l.instagram || '-'}
+Notes: ${l.processingWork || 'None'}
+`;
+    }).join('\n\n');
+
+    const blob = new Blob([txtContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `LeadFlow_Export_${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     setIsExportModalOpen(false);
     setSelectedLeadsToExport([]);
   };
@@ -471,7 +546,7 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-2">
           <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} />
           <NavItem icon={<Search size={18} />} label="Lead Finder" active={activeTab === 'search'} onClick={() => { setActiveTab('search'); setIsSidebarOpen(false); }} />
-          <NavItem icon={<PlusCircle size={18} />} label="Add Lead" active={activeTab === 'add-lead'} onClick={() => { setActiveTab('add-lead'); setIsSidebarOpen(false); }} />
+          <NavItem icon={<PlusCircle size={18} />} label="Add Lead" active={activeTab === 'add-lead'} onClick={() => { setEditingLead(null); setActiveTab('add-lead'); setIsSidebarOpen(false); }} />
           <NavItem icon={<ClipboardList size={18} />} label="All Leads" active={activeTab === 'all-leads'} onClick={() => { setActiveTab('all-leads'); setIsSidebarOpen(false); }} />
           <NavItem icon={<Briefcase size={18} />} label="Outreach" active={activeTab === 'outreach'} onClick={() => { setActiveTab('outreach'); setIsSidebarOpen(false); }} />
         </nav>
@@ -780,10 +855,17 @@ export default function App() {
               >
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
                   <div className="p-8 border-b border-gray-100 bg-gray-50/50">
-                    <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight">Register New Lead</h3>
-                    <p className="text-sm font-medium text-gray-400 uppercase tracking-wider">Manual entry for incoming opportunities</p>
+                    <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight">
+                      {editingLead ? 'Modify Existing Lead' : 'Register New Lead'}
+                    </h3>
+                    <p className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+                      {editingLead ? 'Update details for this opportunity' : 'Manual entry for incoming opportunities'}
+                    </p>
                   </div>
-                  <AddLeadForm onAdd={(lead) => { handleAddLead(lead); setActiveTab('all-leads'); }} />
+                  <AddLeadForm 
+                    initialData={editingLead} 
+                    onAdd={(lead) => { handleAddLead(lead); setActiveTab('all-leads'); setEditingLead(null); }} 
+                  />
                 </div>
               </motion.div>
             ) : activeTab === 'all-leads' ? (
@@ -800,7 +882,7 @@ export default function App() {
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Manage your manual outreach list</p>
                   </div>
                   <button 
-                    onClick={() => setActiveTab('add-lead')}
+                    onClick={() => { setEditingLead(null); setActiveTab('add-lead'); }}
                     className="flex items-center gap-2 px-6 py-3 bg-black text-white font-black uppercase tracking-widest text-xs rounded-xl hover:bg-gray-800 transition-all"
                   >
                     <Plus size={16} /> New Entry
@@ -816,7 +898,12 @@ export default function App() {
                     </div>
                   ) : (
                     storedLeads.map((lead) => (
-                      <LeadCard key={lead.id} lead={lead} onDelete={handleDeleteLead} />
+                      <LeadCard 
+                        key={lead.id} 
+                        lead={lead} 
+                        onDelete={handleDeleteLead} 
+                        onEdit={(l) => { setEditingLead(l); setActiveTab('add-lead'); }}
+                      />
                     ))
                   )}
                 </div>
@@ -1072,9 +1159,11 @@ export default function App() {
                                industry: selectedLead.industry,
                                email: selectedLead.email,
                                phone: selectedLead.phone,
-                               facebook: selectedLead.socialMedia?.facebook,
-                               linkedin: selectedLead.socialMedia?.linkedin,
-                               instagram: selectedLead.socialMedia?.instagram,
+                               whatsapp: selectedLead.phone,
+                               facebook: selectedLead.facebook || selectedLead.socialMedia?.facebook || '',
+                               linkedin: selectedLead.linkedin || selectedLead.socialMedia?.linkedin || '',
+                               instagram: selectedLead.instagram || selectedLead.socialMedia?.instagram || '',
+                               twitter: selectedLead.twitter || selectedLead.socialMedia?.twitter || '',
                                opportunityScore: selectedLead.opportunityScore,
                                cms: selectedLead.cms,
                                status: 'New'
@@ -1189,32 +1278,57 @@ export default function App() {
               </div>
 
               <div className="p-6 border-t border-gray-100 bg-gray-50/50 space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <button 
                     onClick={() => setExportFormat('doc')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest ${
+                    className={`flex flex-col items-center justify-center gap-1 p-3 rounded-xl border-2 transition-all font-black text-[9px] uppercase tracking-widest ${
                       exportFormat === 'doc' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300'
                     }`}
                   >
-                    📄 .DOC (Word)
+                    <Download size={14} className="mb-1" />
+                    .DOCX
                   </button>
                   <button 
                     onClick={() => setExportFormat('csv')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest ${
+                    className={`flex flex-col items-center justify-center gap-1 p-3 rounded-xl border-2 transition-all font-black text-[9px] uppercase tracking-widest ${
                       exportFormat === 'csv' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300'
                     }`}
                   >
-                    📊 .CSV (Sheets)
+                    <ClipboardList size={14} className="mb-1" />
+                    .CSV
+                  </button>
+                  <button 
+                    onClick={() => setExportFormat('json')}
+                    className={`flex flex-col items-center justify-center gap-1 p-3 rounded-xl border-2 transition-all font-black text-[9px] uppercase tracking-widest ${
+                      exportFormat === 'json' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300'
+                    }`}
+                  >
+                    <Globe size={14} className="mb-1" />
+                    .JSON
+                  </button>
+                  <button 
+                    onClick={() => setExportFormat('txt')}
+                    className={`flex flex-col items-center justify-center gap-1 p-3 rounded-xl border-2 transition-all font-black text-[9px] uppercase tracking-widest ${
+                      exportFormat === 'txt' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300'
+                    }`}
+                  >
+                    <Plus size={14} className="mb-1" />
+                    .TXT
                   </button>
                 </div>
                 
                 <button 
-                  onClick={exportFormat === 'doc' ? handleExportDoc : handleExportCSV}
+                  onClick={() => {
+                    if (exportFormat === 'doc') handleExportDoc();
+                    else if (exportFormat === 'csv') handleExportCSV();
+                    else if (exportFormat === 'json') handleExportJSON();
+                    else if (exportFormat === 'txt') handleExportTXT();
+                  }}
                   disabled={selectedLeadsToExport.length === 0}
                   className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 flex items-center justify-center gap-3"
                 >
                   <Download size={18} />
-                  Export {selectedLeadsToExport.length} Leads to {exportFormat.toUpperCase()}
+                  Export {selectedLeadsToExport.length} Leads
                 </button>
               </div>
             </motion.div>
@@ -1225,46 +1339,89 @@ export default function App() {
   );
 }
 
-function AddLeadForm({ onAdd }: { onAdd: (lead: any) => void }) {
+function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initialData?: any }) {
   const [formData, setFormData] = useState({
-    title: '',
-    status: 'New',
-    companyName: '',
-    phone: '',
-    email: '',
-    whatsapp: '',
-    facebook: '',
-    linkedin: '',
-    instagram: '',
-    twitter: '',
-    projectType: '',
-    clientManager: '',
-    website: '',
-    processingWork: ''
+    id: initialData?.id || '',
+    title: initialData?.title || '',
+    status: initialData?.status || 'New',
+    companyName: initialData?.companyName || '',
+    phone: initialData?.phone || '',
+    email: initialData?.email || '',
+    whatsapp: initialData?.whatsapp || '',
+    facebook: initialData?.facebook || '',
+    linkedin: initialData?.linkedin || '',
+    instagram: initialData?.instagram || '',
+    twitter: initialData?.twitter || '',
+    projectType: initialData?.projectType || '',
+    clientManager: initialData?.clientManager || '',
+    website: initialData?.website || '',
+    processingWork: initialData?.processingWork || ''
   });
   const [showSuccess, setShowSuccess] = useState(false);
 
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        id: initialData.id || '',
+        title: initialData.title || '',
+        status: initialData.status || 'New',
+        companyName: initialData.companyName || '',
+        phone: initialData.phone || '',
+        email: initialData.email || '',
+        whatsapp: initialData.whatsapp || '',
+        facebook: initialData.facebook || '',
+        linkedin: initialData.linkedin || '',
+        instagram: initialData.instagram || '',
+        twitter: initialData.twitter || '',
+        projectType: initialData.projectType || '',
+        clientManager: initialData.clientManager || '',
+        website: initialData.website || '',
+        processingWork: initialData.processingWork || ''
+      });
+    } else {
+      setFormData({
+        id: '',
+        title: '',
+        status: 'New',
+        companyName: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        facebook: '',
+        linkedin: '',
+        instagram: '',
+        twitter: '',
+        projectType: '',
+        clientManager: '',
+        website: '',
+        processingWork: ''
+      });
+    }
+  }, [initialData]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newLead = { ...formData, id: Date.now().toString() };
-    onAdd(newLead);
+    onAdd(formData);
     setShowSuccess(true);
-    setFormData({
-      title: '',
-      status: 'New',
-      companyName: '',
-      phone: '',
-      email: '',
-      whatsapp: '',
-      facebook: '',
-      linkedin: '',
-      instagram: '',
-      twitter: '',
-      projectType: '',
-      clientManager: '',
-      website: '',
-      processingWork: ''
-    });
+    if (!initialData) {
+      setFormData({
+        id: '',
+        title: '',
+        status: 'New',
+        companyName: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        facebook: '',
+        linkedin: '',
+        instagram: '',
+        twitter: '',
+        projectType: '',
+        clientManager: '',
+        website: '',
+        processingWork: ''
+      });
+    }
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
@@ -1333,14 +1490,14 @@ function AddLeadForm({ onAdd }: { onAdd: (lead: any) => void }) {
           type="submit"
           className="w-full md:w-auto px-12 py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl hover:bg-gray-800 transition-all shadow-xl active:scale-95"
         >
-          Add Lead to Database
+          {initialData ? 'Update Lead in CRM' : 'Register New Lead'}
         </button>
       </div>
     </form>
   );
 }
 
-function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => void, key?: any }) {
+function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string) => void, onEdit: (lead: any) => void, key?: any }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
@@ -1350,16 +1507,24 @@ function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => voi
     >
       <div className="p-6">
         <div className="flex justify-between items-start mb-4">
-          <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-            lead.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
-            lead.status === 'In Progress' ? 'bg-blue-50 text-blue-600' :
-            lead.status === 'On Hold' ? 'bg-amber-50 text-amber-600' :
-            'bg-gray-100 text-gray-600'
-          }`}>
-            {lead.status}
+          <div className="flex flex-col gap-1">
+            <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit ${
+              lead.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
+              lead.status === 'In Progress' ? 'bg-blue-50 text-blue-600' :
+              lead.status === 'On Hold' ? 'bg-amber-50 text-amber-600' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {lead.status}
+            </div>
+            {lead.industry && (
+              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tight">{lead.industry}</span>
+            )}
           </div>
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black">
+            <button 
+              onClick={() => onEdit(lead)}
+              className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black"
+            >
               <Edit2 size={14} />
             </button>
             <button 
@@ -1371,20 +1536,22 @@ function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => voi
           </div>
         </div>
 
-        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.title}</h4>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{lead.companyName}</p>
+        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.companyName || lead.title}</h4>
+        {lead.title && lead.title !== lead.companyName && (
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{lead.title}</p>
+        )}
 
         <div className="space-y-3 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3 text-xs font-bold text-gray-600 truncate">
-            <Mail size={14} className="text-gray-300 shrink-0" /> {lead.email}
+            <Mail size={14} className="text-gray-300 shrink-0" /> {lead.email || 'No email provided'}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-3 text-xs font-bold text-gray-600 flex-1">
               <Phone size={14} className="text-gray-300 shrink-0" /> {lead.phone || 'N/A'}
             </div>
-            {lead.phone && (
+            {lead.whatsapp && (
               <a 
-                href={`https://wa.me/${lead.phone.replace(/[^0-9]/g, '')}`} 
+                href={`https://wa.me/${lead.whatsapp.replace(/[^0-9]/g, '')}`} 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shrink-0"
@@ -1401,7 +1568,7 @@ function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => voi
         </div>
 
         <div className="pt-4 flex items-center justify-between gap-4">
-          <div className="flex gap-3 shrink-0">
+          <div className="flex gap-2 shrink-0">
             {lead.facebook && (
               <a href={lead.facebook} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
                 <Facebook size={15} />
@@ -1425,7 +1592,7 @@ function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => voi
           </div>
           <button 
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-black transition-colors"
+            className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-black transition-colors bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100"
           >
             {isExpanded ? 'Hide Details' : 'View Details'}
           </button>
@@ -1440,11 +1607,19 @@ function LeadCard({ lead, onDelete }: { lead: any, onDelete: (id: string) => voi
               className="overflow-hidden"
             >
               <div className="pt-6 mt-4 border-t border-gray-100 space-y-4">
-                <DetailRow label="Project Type" value={lead.projectType} />
-                <DetailRow label="Client Manager" value={lead.clientManager} />
+                <div className="grid grid-cols-2 gap-4">
+                  <DetailRow label="Project Type" value={lead.projectType} />
+                  <DetailRow label="Client Manager" value={lead.clientManager} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <DetailRow label="CMS" value={lead.cms} />
+                  <DetailRow label="Opportunity Score" value={lead.opportunityScore} />
+                </div>
+                <DetailRow label="WhatsApp" value={lead.whatsapp} />
+                <DetailRow label="Industry" value={lead.industry} />
                 <div className="space-y-1.5">
                   <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Processing Work</span>
-                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-xl">
+                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-xl min-h-[60px]">
                     {lead.processingWork || 'No processing notes available.'}
                   </p>
                 </div>
