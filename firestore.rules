@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Path Variable Hardening (Helpers)
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    
+    // Pillar 2: Validation Blueprint (The "Anti-Update-Gap")
+    function isValidLead(data) {
+      return data.userId == request.auth.uid &&
+             data.businessName is string && data.businessName.size() <= 200 &&
+             data.websiteUrl is string && data.websiteUrl.size() <= 300 &&
+             (data.keys().hasAll(['userId', 'businessName', 'websiteUrl', 'createdAt', 'updatedAt']));
+    }
+
+    match /leads/{leadId} {
+      // Pillar 3: ID validation
+      allow create: if isSignedIn() && isValidLead(incoming()) && incoming().userId == request.auth.uid && isValidId(leadId);
+      
+      // Pillar 1/4: Identity logic
+      allow get, delete: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      // Pillar 8: Secure List Queries (No blanket reads)
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow update: if isSignedIn() && 
+                      existing().userId == request.auth.uid &&
+                      isValidLead(incoming()) &&
+                      incoming().userId == existing().userId &&
+                      incoming().createdAt == existing().createdAt &&
+                      incoming().updatedAt == request.time;
+    }
+  }
+}

@@ -40,6 +40,24 @@ import {
   BorderStyle
 } from 'docx';
 import { searchLeads, generatePitch, Lead } from './services/leadService';
+import { auth, db } from './lib/firebase';
+import { 
+  onAuthStateChanged, 
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  serverTimestamp, 
+  setDoc,
+  orderBy
+} from 'firebase/firestore';
+import { Auth, UserProfile } from './components/Auth';
 
 const getTwitterIcon = (size = 14) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -48,6 +66,9 @@ const getTwitterIcon = (size = 14) => (
 );
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState({ niche: 'Dentists', location: 'Austin, TX' });
@@ -60,29 +81,74 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<'doc' | 'csv'>('doc');
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
-  // Load leads from localStorage on mount
+  // Auth Listener
   useEffect(() => {
-    const saved = localStorage.getItem('leadflow_leads');
-    if (saved) {
-      try {
-        setStoredLeads(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse stored leads", e);
-      }
-    }
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthReady(true);
+    });
+    return () => unsubscribe();
   }, []);
 
-  // Save leads whenever storedLeads changes
+  // Firestore Sync for CRM leads
   useEffect(() => {
-    localStorage.setItem('leadflow_leads', JSON.stringify(storedLeads));
-  }, [storedLeads]);
+    if (!user) {
+      setStoredLeads([]);
+      return;
+    }
 
-  const handleAddLead = (newLead: any) => {
-    setStoredLeads(prev => [newLead, ...prev]);
+    const q = query(
+      collection(db, 'leads'), 
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      }));
+      setStoredLeads(docs);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      setErrorStatus("Failed to sync leads with database. Please check permissions.");
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleAddLead = async (newLead: any) => {
+    if (!user) {
+      setShowAuthModal(true);
+      return;
+    }
+    
+    try {
+      const leadData = {
+        ...newLead,
+        userId: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      
+      // Remove local ID if it exists and let Firestore generate it
+      delete leadData.id;
+      
+      await addDoc(collection(db, 'leads'), leadData);
+    } catch (err: any) {
+      console.error("Failed to add lead:", err);
+      setErrorStatus("Failed to save lead to database.");
+    }
   };
 
-  const handleDeleteLead = (id: string) => {
-    setStoredLeads(prev => prev.filter(l => l.id !== id));
+  const handleDeleteLead = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'leads', id));
+    } catch (err) {
+      console.error("Failed to delete lead:", err);
+      setErrorStatus("Failed to remove lead from database.");
+    }
   };
   const [pitch, setPitch] = useState<string | null>(null);
   const [generatingPitch, setGeneratingPitch] = useState(false);
@@ -324,15 +390,16 @@ export default function App() {
         <div className="p-6 border-t border-gray-100 space-y-6">
           {/* Personal Profile Section */}
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-black flex items-center justify-center text-white font-black text-xs border-2 border-gray-100 shadow-sm">
-                SR
-              </div>
-              <div>
-                <p className="text-sm font-black text-gray-900 leading-none">STR ROBIN</p>
-                <p className="text-[10px] font-bold text-emerald-500 uppercase mt-1">WP Developer</p>
-              </div>
-            </div>
+            {user ? (
+              <UserProfile user={user} />
+            ) : (
+              <button 
+                onClick={() => setShowAuthModal(true)}
+                className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-[10px] rounded-2xl shadow-xl hover:bg-gray-800 transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Lock size={14} /> Sign In
+              </button>
+            )}
             
             <div className="flex gap-3 px-1">
               <a href="https://www.facebook.com/profile.php?id=61586575149744" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
@@ -352,6 +419,8 @@ export default function App() {
           <NavItem icon={<Settings size={18} />} label="Settings" onClick={() => {}} />
         </div>
       </aside>
+
+      {showAuthModal && <Auth onClose={() => setShowAuthModal(false)} />}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden w-full">
@@ -900,9 +969,39 @@ export default function App() {
                             </button>
                             <pre className="text-[11px] font-medium text-gray-600 whitespace-pre-wrap leading-relaxed font-sans">{pitch}</pre>
                          </div>
-                         <button className="w-full py-4 bg-emerald-500 text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-lg hover:bg-emerald-600 transition-all">
-                            SYNC TO CRM
-                         </button>
+                         {pitch && (
+                           <button 
+                            onClick={async () => {
+                              if (!user) {
+                                setShowAuthModal(true);
+                                return;
+                              }
+                              try {
+                                await addDoc(collection(db, 'leads'), {
+                                  businessName: selectedLead.businessName || 'Untitled',
+                                  websiteUrl: selectedLead.websiteUrl || '',
+                                  email: selectedLead.email || '',
+                                  phone: selectedLead.phone || '',
+                                  websiteIssues: selectedLead.websiteIssues || [],
+                                  opportunityScore: selectedLead.opportunityScore || 0,
+                                  cms: selectedLead.cms || 'WordPress',
+                                  details: pitch,
+                                  userId: user.uid,
+                                  createdAt: serverTimestamp(),
+                                  updatedAt: serverTimestamp()
+                                });
+                                setErrorStatus(null);
+                                // Optional: alert success
+                              } catch (err) {
+                                console.error("Sync error:", err);
+                                setErrorStatus("Failed to sync to CRM.");
+                              }
+                            }}
+                            className="w-full py-4 bg-emerald-500 text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-lg hover:bg-emerald-600 transition-all"
+                           >
+                              SYNC TO CRM
+                           </button>
+                         )}
                          <button 
                           onClick={() => setPitch(null)}
                           className="w-full py-2 text-gray-400 font-bold text-[10px] uppercase hover:text-gray-900 transition-colors"

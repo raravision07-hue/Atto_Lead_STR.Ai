@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Lead": {
+      "title": "Lead",
+      "description": "A business lead found via AI search or added manually.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string", "description": "The UID of the user who owns this lead." },
+        "businessName": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "industry": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "socialMedia": {
+          "type": "object",
+          "properties": {
+            "facebook": { "type": "string" },
+            "linkedin": { "type": "string" },
+            "instagram": { "type": "string" },
+            "twitter": { "type": "string" },
+            "tiktok": { "type": "string" }
+          }
+        },
+        "websiteIssues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "opportunityScore": { "type": "number" },
+        "cms": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "businessName", "websiteUrl", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "User's individual leads."
+    }
+  }
+}

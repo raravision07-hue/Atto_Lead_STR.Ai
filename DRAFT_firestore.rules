@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Auth helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Lead validation helper
+    function isValidLead(data) {
+      return data.userId == request.auth.uid &&
+             data.businessName is string && data.businessName.size() <= 256 &&
+             data.websiteUrl is string && data.websiteUrl.size() <= 512 &&
+             (data.id == null || isValidId(data.id)) &&
+             (data.email == null || data.email is string) &&
+             (data.phone == null || data.phone is string) &&
+             (data.opportunityScore == null || data.opportunityScore is number) &&
+             (data.createdAt == null || data.createdAt is timestamp || data.createdAt == request.time);
+    }
+
+    match /leads/{leadId} {
+      allow create: if isSignedIn() && isValidLead(incoming()) && incoming().userId == request.auth.uid;
+      allow get, delete: if isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isOwner(existing().userId) && 
+                      isValidLead(incoming()) && 
+                      incoming().userId == existing().userId &&
+                      incoming().createdAt == existing().createdAt;
+    }
+  }
+}
