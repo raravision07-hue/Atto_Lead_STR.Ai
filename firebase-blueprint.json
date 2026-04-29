@@ -7,12 +7,23 @@
       "properties": {
         "id": { "type": "string" },
         "title": { "type": "string" },
+        "businessName": { "type": "string" },
         "companyName": { "type": "string" },
+        "websiteUrl": { "type": "string" },
         "website": { "type": "string" },
         "industry": { "type": "string" },
         "email": { "type": "string" },
         "phone": { "type": "string" },
         "whatsapp": { "type": "string" },
+        "socialMedia": {
+          "type": "object",
+          "properties": {
+            "facebook": { "type": "string" },
+            "linkedin": { "type": "string" },
+            "instagram": { "type": "string" },
+            "twitter": { "type": "string" }
+          }
+        },
         "facebook": { "type": "string" },
         "linkedin": { "type": "string" },
         "instagram": { "type": "string" },
@@ -21,13 +32,30 @@
         "clientManager": { "type": "string" },
         "processingWork": { "type": "string" },
         "opportunityScore": { "type": "number" },
+        "techStack": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "websiteIssues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "auditResults": {
+          "type": "object",
+          "properties": {
+            "performance": { "type": "number" },
+            "security": { "type": "number" },
+            "seo": { "type": "number" },
+            "design": { "type": "number" }
+          }
+        },
         "cms": { "type": "string" },
         "status": { "type": "string" },
         "userId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["companyName", "userId", "createdAt"]
+      "required": ["userId", "createdAt"]
     },
     "UserProfile": {
       "title": "User Profile",

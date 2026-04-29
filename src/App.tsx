@@ -25,7 +25,9 @@ import {
   PlusCircle,
   ClipboardList,
   MessageSquare,
+  Sparkles,
   MoreVertical,
+  BellOff,
   Trash2,
   Edit2,
   LogOut,
@@ -41,7 +43,19 @@ import {
   AlignmentType,
   BorderStyle
 } from 'docx';
-import { searchLeads, generatePitch, Lead } from './services/leadService';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  ResponsiveContainer, 
+  Cell, 
+  PieChart, 
+  Pie 
+} from 'recharts';
+import { searchLeads, generatePitch, generateDemoPrompt, generateFollowUp, enrichLeadData, Lead, DemoPromptResult } from './services/leadService';
 import { auth, db } from './lib/firebase';
 import { useAuth } from './contexts/AuthContext';
 import { 
@@ -150,20 +164,36 @@ export default function App() {
   const handleAddLead = async (newLead: any) => {
     if (!user) return;
     const path = `users/${user.uid}/leads`;
+    
+    // Clean data to avoid Firestore 'undefined' crash
+    const sanitize = (obj: any) => {
+      const cleaned: any = {};
+      Object.keys(obj).forEach(key => {
+        if (obj[key] !== undefined) {
+          cleaned[key] = obj[key];
+        }
+      });
+      return cleaned;
+    };
+
     try {
       if (newLead.id && storedLeads.some(l => l.id === newLead.id)) {
         // Update existing
         const { id, ...updateData } = newLead;
         await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
-          ...updateData,
+          ...sanitize(updateData),
           updatedAt: serverTimestamp()
         });
       } else {
         // Create new
         const { id: _, ...createData } = newLead;
         await addDoc(collection(db, path), {
-          ...createData,
+          ...sanitize(createData),
           userId: user.uid,
+          status: createData.status || 'New',
+          industry: createData.industry || '',
+          cms: createData.cms || '',
+          projectType: createData.projectType || 'General Redesign',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -176,10 +206,21 @@ export default function App() {
   const handleUpdateLead = async (updatedLead: any) => {
     if (!user) return;
     const path = `users/${user.uid}/leads/${updatedLead.id}`;
+    
+    const sanitize = (obj: any) => {
+      const cleaned: any = {};
+      Object.keys(obj).forEach(key => {
+        if (obj[key] !== undefined) {
+          cleaned[key] = obj[key];
+        }
+      });
+      return cleaned;
+    };
+
     try {
       const { id, ...data } = updatedLead;
       await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
-        ...data,
+        ...sanitize(data),
         updatedAt: serverTimestamp()
       });
     } catch (error) {
@@ -199,6 +240,11 @@ export default function App() {
 
   const [pitch, setPitch] = useState<string | null>(null);
   const [generatingPitch, setGeneratingPitch] = useState(false);
+  const [demoPrompt, setDemoPrompt] = useState<DemoPromptResult | null>(null);
+  const [generatingDemo, setGeneratingDemo] = useState(false);
+  const [followUp, setFollowUp] = useState<string | null>(null);
+  const [followUpStep, setFollowUpStep] = useState(1);
+  const [generatingFollowUpState, setGeneratingFollowUpState] = useState(false);
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -229,6 +275,57 @@ export default function App() {
       setErrorStatus(err.message || "Failed to generate pitch. Try again.");
     } finally {
       setGeneratingPitch(false);
+    }
+  };
+
+  const getDashboardData = () => {
+    const statusData = ['New', 'Contacted', 'Meeting', 'Proposal', 'Won', 'Lost'].map(status => ({
+      name: status,
+      value: storedLeads.filter(l => l.status === status).length,
+      color: status === 'Won' ? '#10b981' : status === 'Lost' ? '#ef4444' : status === 'Proposal' ? '#a855f7' : status === 'Meeting' ? '#f59e0b' : status === 'Contacted' ? '#3b82f6' : '#9ca3af'
+    }));
+
+    const industryMap: Record<string, number> = {};
+    storedLeads.forEach(l => {
+      const ind = l.industry || 'Other';
+      industryMap[ind] = (industryMap[ind] || 0) + 1;
+    });
+
+    const industryData = Object.entries(industryMap).map(([name, value]) => ({ name, value }));
+
+    return { statusData, industryData };
+  };
+
+  const handleGenerateFollowUp = async (lead: Lead, step: number = 1) => {
+    setGeneratingFollowUpState(true);
+    setFollowUpStep(step);
+    setErrorStatus(null);
+    try {
+      const result = await generateFollowUp(lead, step);
+      setFollowUp(result);
+    } catch (err: any) {
+      console.error("Follow-up generation failed:", err);
+      setErrorStatus(err.message || "Failed to generate follow-up. Try again.");
+    } finally {
+      setGeneratingFollowUpState(false);
+    }
+  };
+
+  const handlePrintAudit = () => {
+    window.print();
+  };
+
+  const handleGenerateDemoPrompt = async (lead: Lead) => {
+    setGeneratingDemo(true);
+    setErrorStatus(null);
+    try {
+      const result = await generateDemoPrompt(lead);
+      setDemoPrompt(result);
+    } catch (err: any) {
+      console.error("Demo generation failed:", err);
+      setErrorStatus(err.message || "Failed to generate demo prompt. Try again.");
+    } finally {
+      setGeneratingDemo(false);
     }
   };
 
@@ -548,6 +645,7 @@ Notes: ${l.processingWork || 'None'}
           <NavItem icon={<Search size={18} />} label="Lead Finder" active={activeTab === 'search'} onClick={() => { setActiveTab('search'); setIsSidebarOpen(false); }} />
           <NavItem icon={<PlusCircle size={18} />} label="Add Lead" active={activeTab === 'add-lead'} onClick={() => { setEditingLead(null); setActiveTab('add-lead'); setIsSidebarOpen(false); }} />
           <NavItem icon={<ClipboardList size={18} />} label="All Leads" active={activeTab === 'all-leads'} onClick={() => { setActiveTab('all-leads'); setIsSidebarOpen(false); }} />
+          <NavItem icon={<BarChart3 size={18} />} label="Pipeline" active={activeTab === 'pipeline'} onClick={() => { setActiveTab('pipeline'); setIsSidebarOpen(false); }} />
           <NavItem icon={<Briefcase size={18} />} label="Outreach" active={activeTab === 'outreach'} onClick={() => { setActiveTab('outreach'); setIsSidebarOpen(false); }} />
         </nav>
 
@@ -667,22 +765,73 @@ Notes: ${l.processingWork || 'None'}
                   <StatCard label="Manual CRM" value={storedLeads.length.toString()} icon={<ClipboardList className="text-purple-500" />} trend="Saved leads" />
                 </div>
 
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+                   <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                      <div className="flex items-center justify-between mb-6">
+                         <div>
+                            <h3 className="font-black text-gray-900 text-sm uppercase tracking-widest">Pipeline Health</h3>
+                            <p className="text-[10px] font-bold text-gray-400">Current Sales Cycle Distribution</p>
+                         </div>
+                      </div>
+                      <div className="h-[250px] w-full">
+                         <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={getDashboardData().statusData}>
+                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                               <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                               <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                               <RechartsTooltip 
+                                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px', fontWeight: 700 }}
+                                  cursor={{ fill: '#f8fafc' }}
+                               />
+                               <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                                  {getDashboardData().statusData.map((entry, index) => (
+                                     <Cell key={`cell-${index}`} fill={entry.color} />
+                                  ))}
+                               </Bar>
+                            </BarChart>
+                         </ResponsiveContainer>
+                      </div>
+                   </div>
+
+                   <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                      <div>
+                        <h3 className="font-black text-gray-900 text-sm uppercase tracking-widest mb-1">Status Summary</h3>
+                        <p className="text-[10px] font-bold text-gray-400 mb-6">Pipeline segmentation</p>
+                        <div className="space-y-4">
+                          {getDashboardData().statusData.filter(d => d.value > 0).map((d, i) => (
+                            <div key={i} className="flex items-center justify-between">
+                               <div className="flex items-center gap-2">
+                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
+                                  <span className="text-[11px] font-bold text-gray-600">{d.name}</span>
+                               </div>
+                               <span className="text-[11px] font-black text-gray-900">{d.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setActiveTab('pipeline')}
+                        className="mt-6 w-full py-3 bg-gray-50 border border-gray-100 text-gray-500 font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-black hover:text-white transition-all"
+                      >
+                        View Board View
+                      </button>
+                   </div>
+                </div>
+
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                    <h3 className="font-bold text-gray-900 mb-4">Quick Summary</h3>
+                    <h3 className="font-bold text-gray-900 mb-4">Market Focus</h3>
                     <div className="space-y-4">
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
-                        <span className="text-sm font-medium text-gray-500">Most Active Sector</span>
-                        <span className="text-sm font-black text-gray-900">{searchQuery.niche}</span>
-                      </div>
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
-                        <span className="text-sm font-medium text-gray-500">Target Region</span>
-                        <span className="text-sm font-black text-gray-900">{searchQuery.location}</span>
-                      </div>
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
-                        <span className="text-sm font-medium text-gray-500">Average Opportunity</span>
-                        <span className="text-sm font-black text-emerald-600">8.4/10</span>
-                      </div>
+                      {getDashboardData().industryData.length === 0 ? (
+                        <div className="text-center py-6 text-gray-400 text-xs italic">No industry data yet.</div>
+                      ) : (
+                        getDashboardData().industryData.slice(0, 4).map((d, i) => (
+                          <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
+                            <span className="text-sm font-medium text-gray-500">{d.name}</span>
+                            <span className="text-sm font-black text-gray-900">{d.value} Leads</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -876,17 +1025,25 @@ Notes: ${l.processingWork || 'None'}
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-3xl font-black text-gray-900">Stored CRM Leads</h3>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Manage your manual outreach list</p>
                   </div>
-                  <button 
-                    onClick={() => { setEditingLead(null); setActiveTab('add-lead'); }}
-                    className="flex items-center gap-2 px-6 py-3 bg-black text-white font-black uppercase tracking-widest text-xs rounded-xl hover:bg-gray-800 transition-all"
-                  >
-                    <Plus size={16} /> New Entry
-                  </button>
+                  <div className="flex gap-2">
+                     <button 
+                      onClick={() => setActiveTab('pipeline')}
+                      className="flex items-center gap-2 px-6 py-3 bg-white border border-gray-200 text-gray-600 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-gray-100 transition-all"
+                    >
+                      <LayoutDashboard size={14} /> Board View
+                    </button>
+                    <button 
+                      onClick={() => { setEditingLead(null); setActiveTab('add-lead'); }}
+                      className="flex items-center gap-2 px-6 py-3 bg-black text-white font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-gray-800 transition-all shadow-lg"
+                    >
+                      <Plus size={14} /> New Entry
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -906,6 +1063,71 @@ Notes: ${l.processingWork || 'None'}
                       />
                     ))
                   )}
+                </div>
+              </motion.div>
+            ) : activeTab === 'pipeline' ? (
+               <motion.div
+                key="pipeline"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="h-full flex flex-col space-y-6"
+              >
+                <div className="flex items-center justify-between">
+                   <div>
+                    <h3 className="text-3xl font-black text-gray-900">Sales Pipeline</h3>
+                    <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Visual Lead Management</p>
+                  </div>
+                </div>
+
+                <div className="flex-1 flex gap-6 pb-6 overflow-x-auto min-h-0">
+                  {['New', 'Contacted', 'Meeting', 'Proposal', 'Won', 'Lost'].map((status) => (
+                    <div key={status} className="w-80 shrink-0 flex flex-col bg-gray-100/50 rounded-3xl border border-gray-200">
+                      <div className="p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${
+                            status === 'Won' ? 'bg-emerald-500' :
+                            status === 'Lost' ? 'bg-red-500' :
+                            status === 'Proposal' ? 'bg-purple-500' :
+                            status === 'Meeting' ? 'bg-amber-500' :
+                            status === 'Contacted' ? 'bg-blue-500' :
+                            'bg-gray-400'
+                          }`} />
+                          <h4 className="font-black text-xs uppercase tracking-widest text-gray-900">{status}</h4>
+                        </div>
+                        <span className="text-[10px] font-black text-gray-400 bg-white px-2 py-1 rounded-lg border border-gray-200 shadow-sm">
+                          {storedLeads.filter(l => l.status === status).length}
+                        </span>
+                      </div>
+                      
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {storedLeads.filter(l => l.status === status).map((lead) => (
+                          <motion.div 
+                            layoutId={lead.id}
+                            key={lead.id}
+                            onClick={() => { setEditingLead(lead); setActiveTab('add-lead'); }}
+                            className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm hover:border-black transition-all cursor-pointer group"
+                          >
+                            <p className="font-black text-sm text-gray-900 mb-1 group-hover:text-black">
+                              {lead.companyName || lead.title}
+                            </p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight truncate">
+                              {lead.industry || 'No Industry'}
+                            </p>
+                            <div className="mt-3 pt-3 border-t border-gray-50 flex items-center justify-between">
+                               <div className="flex gap-1">
+                                  {lead.email && <Mail size={10} className="text-gray-300" />}
+                                  {lead.phone && <Phone size={10} className="text-gray-300" />}
+                               </div>
+                               <span className={`text-[9px] font-black px-2 py-0.5 rounded border ${getScoreColor(lead.opportunityScore || 5)}`}>
+                                 {lead.opportunityScore || 5}/10
+                               </span>
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </motion.div>
             ) : activeTab === 'outreach' ? (
@@ -929,8 +1151,8 @@ Notes: ${l.processingWork || 'None'}
                         {[...leads, ...storedLeads].filter(l => (l.email || l.businessName)).map((l, i) => (
                           <button 
                             key={i}
-                            onClick={() => { setSelectedLead(l); setPitch(null); }}
-                            className="w-full text-left p-4 hover:bg-gray-50 transition-colors group"
+                            onClick={() => { setSelectedLead(l); setPitch(null); setFollowUp(null); }}
+                            className={`w-full text-left p-4 hover:bg-gray-50 transition-colors group ${selectedLead?.id === l.id ? 'bg-gray-50 border-r-4 border-black' : ''}`}
                           >
                             <div className="font-bold text-sm text-gray-900 truncate">{l.businessName || l.title || 'Untitled Lead'}</div>
                             <div className="text-[10px] font-bold text-gray-400 uppercase truncate mt-0.5">{l.email || 'No email provided'}</div>
@@ -950,43 +1172,71 @@ Notes: ${l.processingWork || 'None'}
                              </div>
                              <h4 className="text-xl font-black text-gray-900 mb-2">New Proposal for {selectedLead.businessName || selectedLead.title}</h4>
                              <p className="text-sm text-gray-400 mb-8 max-w-sm">Ready to generate a professional audit-based outreach email?</p>
-                             <button 
-                               onClick={() => handleGeneratePitch(selectedLead)}
-                               className="px-12 py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all"
-                             >
-                               Generate AI Pitch
-                             </button>
+                             
+                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                                <button 
+                                  onClick={() => handleGeneratePitch(selectedLead)}
+                                  className="px-6 py-4 bg-black text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all text-center"
+                                >
+                                  Generate 1st Pitch
+                                </button>
+
+                                <button 
+                                  onClick={() => handleGenerateFollowUp(selectedLead, 1)}
+                                  className="px-6 py-4 bg-white border border-gray-200 text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-sm hover:bg-gray-50 transition-all text-center"
+                                >
+                                  1st Follow-up
+                                </button>
+
+                                <button 
+                                  onClick={() => handleGenerateFollowUp(selectedLead, 2)}
+                                  className="px-6 py-4 bg-white border border-gray-200 text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-sm hover:bg-gray-50 transition-all text-center"
+                                >
+                                  2nd Follow-up
+                                </button>
+
+                                <button 
+                                  onClick={() => handleGenerateFollowUp(selectedLead, 3)}
+                                  className="px-6 py-4 bg-white border border-gray-200 text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-sm hover:bg-gray-50 transition-all text-center"
+                                >
+                                  3rd (Break-up)
+                                </button>
+                             </div>
                            </>
-                         ) : generatingPitch ? (
+                         ) : generatingPitch || generatingFollowUpState ? (
                            <div className="space-y-4">
                               <Loader2 size={48} className="animate-spin text-black mx-auto" />
-                              <p className="text-xs font-black uppercase tracking-widest animate-pulse">Crafting Custom Hook...</p>
+                              <p className="text-xs font-black uppercase tracking-widest animate-pulse">
+                                {generatingPitch ? "Crafting Custom Hook..." : `Preparing Follow-up #${followUpStep}...`}
+                              </p>
                            </div>
-                         ) : (
+                         ) : pitch || followUp ? (
                            <div className="w-full space-y-6 text-left">
                               <div className="flex justify-between items-center bg-gray-50 p-4 rounded-2xl border border-gray-100">
                                 <div>
-                                  <h5 className="font-black text-xs uppercase tracking-widest text-gray-400 mb-1">To:</h5>
+                                  <h5 className="font-black text-xs uppercase tracking-widest text-gray-400 mb-1">
+                                    {pitch ? "Phase: Initial Pitch" : `Phase: Follow-up #${followUpStep}`}
+                                  </h5>
                                   <p className="font-bold text-gray-900">{selectedLead.email || 'N/A'}</p>
                                 </div>
                                 <button 
-                                  onClick={() => navigator.clipboard.writeText(pitch!)}
+                                  onClick={() => navigator.clipboard.writeText(pitch || followUp || '')}
                                   className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black hover:text-white transition-all shadow-sm"
                                 >
                                   <Copy size={14} /> Copy Body
                                 </button>
                               </div>
                               <div className="bg-white p-8 rounded-3xl border border-gray-200 shadow-inner relative group">
-                                <pre className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">{pitch}</pre>
+                                <pre className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">{pitch || followUp}</pre>
                               </div>
                               <button 
-                                onClick={() => setPitch(null)}
+                                onClick={() => { setPitch(null); setFollowUp(null); }}
                                 className="w-full py-4 text-gray-400 font-bold text-xs uppercase hover:text-black transition-colors"
                               >
                                 Try different angle
                               </button>
                            </div>
-                         )}
+                         ) : null}
                       </div>
                     ) : (
                       <div className="bg-white rounded-3xl border border-gray-200 border-dashed p-12 flex flex-col items-center justify-center text-center text-gray-400 min-h-[400px]">
@@ -1027,14 +1277,24 @@ Notes: ${l.processingWork || 'None'}
               <div className="flex flex-col lg:flex-row h-full">
                 {/* Audit Details */}
                 <div className="flex-1 p-6 lg:p-10 border-b lg:border-b-0 lg:border-r border-gray-100">
-                  <div className="mb-8">
-                     <span className="inline-block px-3 py-1 bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-full mb-4">WordPress Verified</span>
-                     <h2 className="text-3xl lg:text-4xl font-black text-gray-900 leading-none mb-3 break-words">{selectedLead.businessName}</h2>
-                     <a href={selectedLead.websiteUrl} target="_blank" rel="noopener noreferrer" className="text-gray-400 font-bold flex items-center gap-2 hover:text-black transition-colors break-all text-sm">
-                      <Globe size={18} className="shrink-0" />
-                      {selectedLead.websiteUrl}
-                      <ExternalLink size={14} className="shrink-0" />
-                    </a>
+                  <div className="mb-8 flex items-center justify-between">
+                     <div className="flex-1">
+                        <span className="inline-block px-3 py-1 bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-full mb-4">WordPress Verified</span>
+                        <h2 className="text-3xl lg:text-4xl font-black text-gray-900 leading-none mb-3 break-words">{selectedLead.businessName}</h2>
+                        <a href={selectedLead.websiteUrl} target="_blank" rel="noopener noreferrer" className="text-gray-400 font-bold flex items-center gap-2 hover:text-black transition-colors break-all text-sm">
+                          <Globe size={18} className="shrink-0" />
+                          {selectedLead.websiteUrl}
+                          <ExternalLink size={14} className="shrink-0" />
+                        </a>
+                     </div>
+                     <button 
+                        onClick={handlePrintAudit}
+                        className="print:hidden p-4 bg-gray-50 text-gray-400 hover:text-black hover:bg-gray-100 rounded-2xl transition-all flex flex-col items-center gap-1 border border-gray-100"
+                        title="Download PDF/Print Audit"
+                     >
+                        <Download size={20} />
+                        <span className="text-[8px] font-black uppercase tracking-tighter">PDF Report</span>
+                     </button>
                   </div>
 
                   <div className="space-y-8">
@@ -1051,6 +1311,28 @@ Notes: ${l.processingWork || 'None'}
                           </div>
                         ))}
                       </div>
+                    </section>
+
+                    <section className="space-y-4">
+                       <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">Prospect Intelligence</h4>
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1">
+                             <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">CMS Detected</span>
+                             <p className="text-xs font-black">{selectedLead.cms || 'WordPress (Inferred)'}</p>
+                          </div>
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1">
+                             <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Industry Sector</span>
+                             <p className="text-xs font-black uppercase tracking-tight">{selectedLead.industry}</p>
+                          </div>
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1">
+                             <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Project Category</span>
+                             <p className="text-xs font-black uppercase tracking-tight">{selectedLead.projectType || 'General Redesign'}</p>
+                          </div>
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1">
+                             <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Potential Value</span>
+                             <p className="text-xs font-black text-emerald-600">${(selectedLead.opportunityScore * 1000).toLocaleString()}+ EST.</p>
+                          </div>
+                       </div>
                     </section>
 
                     <section className="space-y-4">
@@ -1159,17 +1441,22 @@ Notes: ${l.processingWork || 'None'}
                                industry: selectedLead.industry,
                                email: selectedLead.email,
                                phone: selectedLead.phone,
-                               whatsapp: selectedLead.phone,
+                               whatsapp: selectedLead.whatsapp || selectedLead.phone,
                                facebook: selectedLead.facebook || selectedLead.socialMedia?.facebook || '',
                                linkedin: selectedLead.linkedin || selectedLead.socialMedia?.linkedin || '',
                                instagram: selectedLead.instagram || selectedLead.socialMedia?.instagram || '',
-                               twitter: selectedLead.twitter || selectedLead.socialMedia?.twitter || '',
+                               twitter: selectedLead.socialMedia?.twitter || selectedLead.socialMedia?.twitter || '',
                                opportunityScore: selectedLead.opportunityScore,
+                               websiteIssues: selectedLead.websiteIssues || [],
                                cms: selectedLead.cms,
+                               projectType: selectedLead.projectType || 'General Redesign',
                                status: 'New'
                              });
                              setActiveTab('all-leads');
                              setSelectedLead(null);
+                             setPitch(null);
+                             setFollowUp(null);
+                             setDemoPrompt(null);
                            }}
                            className="w-full py-4 bg-emerald-500 text-white font-black uppercase tracking-widest text-sm rounded-2xl shadow-lg hover:bg-emerald-600 transition-all"
                          >
@@ -1183,6 +1470,94 @@ Notes: ${l.processingWork || 'None'}
                          </button>
                       </div>
                     )}
+
+                    {/* Create Demo Section */}
+                    <div className="mt-8 pt-8 border-t border-gray-200">
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <h5 className="font-black text-gray-900 text-sm">Need a Fresh Look?</h5>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Our AI will fix security issues and design a modern, conversion-focused demo based on your audit.</p>
+                        </div>
+                        
+                        {!demoPrompt && !generatingDemo ? (
+                          <button 
+                            onClick={() => handleGenerateDemoPrompt(selectedLead!)}
+                            className="w-full py-3 bg-white border border-gray-200 text-black font-black uppercase tracking-widest text-[10px] rounded-xl shadow-sm hover:bg-black hover:text-white transition-all flex items-center justify-center gap-2"
+                          >
+                            <TrendingUp size={14} />
+                            Create Demo
+                          </button>
+                        ) : generatingDemo ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="flex flex-col items-center gap-3">
+                              <Loader2 size={24} className="animate-spin text-black" />
+                              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Analyzing & Re-Architecting...</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <motion.div 
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center gap-2"
+                            >
+                              <CheckCircle2 size={14} className="text-emerald-500" />
+                              <span className="text-[10px] font-bold text-emerald-700 uppercase">Your modern redesign prompt is ready!</span>
+                            </motion.div>
+
+                            <div className="space-y-4">
+                              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">১. Visual Audit Summary</div>
+                                <div className="text-[10px] font-medium text-gray-600 leading-relaxed whitespace-pre-line">
+                                  {demoPrompt.visualAudit}
+                                </div>
+                              </div>
+
+                              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">২. Key Improvements</div>
+                                <div className="text-[10px] font-medium text-gray-600 leading-relaxed whitespace-pre-line">
+                                  {demoPrompt.keyImprovements}
+                                </div>
+                              </div>
+                              
+                              <div className="p-4 bg-gray-900 rounded-2xl overflow-hidden relative group">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 flex justify-between items-center">
+                                  <span>৩. Master Prompt for AI Studio</span>
+                                  <button 
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(demoPrompt.masterPrompt);
+                                    }}
+                                    className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[9px] transition-colors"
+                                  >
+                                    COPY PROMPT
+                                  </button>
+                                </div>
+                                <div className="text-[10px] font-mono text-gray-400 line-clamp-4 leading-relaxed bg-black/30 p-3 rounded-xl">
+                                  {demoPrompt.masterPrompt}
+                                </div>
+                              </div>
+
+                              <a 
+                                href={`https://aistudio.google.com/app/prompts/new?text=${encodeURIComponent(demoPrompt.masterPrompt)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2 group border border-white/10"
+                              >
+                                <ExternalLink size={16} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                                Build Demo on Google AI Studio
+                              </a>
+
+                              <button 
+                                onClick={() => setDemoPrompt(null)}
+                                className="w-full py-1 text-gray-400 font-bold text-[9px] uppercase hover:text-gray-900 transition-colors"
+                              >
+                                Create Another Version
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1340,62 +1715,221 @@ Notes: ${l.processingWork || 'None'}
 }
 
 function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initialData?: any }) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<any>({
     id: initialData?.id || '',
-    title: initialData?.title || '',
+    businessName: initialData?.businessName || '',
     status: initialData?.status || 'New',
-    companyName: initialData?.companyName || '',
+    companyName: initialData?.businessName || initialData?.companyName || '',
     phone: initialData?.phone || '',
     email: initialData?.email || '',
     whatsapp: initialData?.whatsapp || '',
-    facebook: initialData?.facebook || '',
-    linkedin: initialData?.linkedin || '',
-    instagram: initialData?.instagram || '',
-    twitter: initialData?.twitter || '',
+    facebook: initialData?.socialMedia?.facebook || '',
+    linkedin: initialData?.socialMedia?.linkedin || '',
+    instagram: initialData?.socialMedia?.instagram || '',
+    twitter: initialData?.socialMedia?.twitter || '',
     projectType: initialData?.projectType || '',
     clientManager: initialData?.clientManager || '',
-    website: initialData?.website || '',
-    processingWork: initialData?.processingWork || ''
+    website: initialData?.websiteUrl || initialData?.website || '',
+    processingWork: initialData?.processingWork || '',
+    industry: initialData?.industry || '',
+    cms: initialData?.cms || '',
+    websiteIssues: initialData?.websiteIssues || [],
+    techStack: initialData?.techStack || [],
+    auditResults: initialData?.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
+    opportunityScore: initialData?.opportunityScore || 0
   });
   const [showSuccess, setShowSuccess] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [enrichmentStatus, setEnrichmentStatus] = useState<string>('');
+  const [followUpText, setFollowUpText] = useState<string | null>(null);
+  const [demoPrompt, setDemoPrompt] = useState<DemoPromptResult | null>(null);
+  const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false);
+  const [isGeneratingDemo, setIsGeneratingDemo] = useState(false);
+  const [genStep, setGenStep] = useState(1);
+
+  const handleGenFollowUp = async (step: number) => {
+    const leadObj: Lead = {
+      id: formData.id,
+      businessName: formData.companyName || '',
+      websiteUrl: formData.website || '',
+      email: formData.email || '',
+      industry: formData.industry || '',
+      websiteIssues: formData.websiteIssues || [],
+      cms: formData.cms || '',
+      phone: formData.phone || '',
+      socialMedia: {
+        facebook: formData.facebook,
+        linkedin: formData.linkedin,
+        instagram: formData.instagram,
+        twitter: formData.twitter
+      },
+      opportunityScore: formData.opportunityScore || 0,
+      status: formData.status || 'New',
+      projectType: formData.projectType || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    setIsGeneratingFollowUp(true);
+    setGenStep(step);
+    setFollowUpText(null);
+    setDemoPrompt(null);
+    try {
+      const result = await generateFollowUp(leadObj, step);
+      setFollowUpText(result);
+    } catch (err) {
+      console.error("Follow-up generation failed:", err);
+    } finally {
+      setIsGeneratingFollowUp(false);
+    }
+  };
+
+  const handleGenDemo = async () => {
+    const leadObj: Lead = {
+      id: formData.id,
+      businessName: formData.companyName || '',
+      websiteUrl: formData.website || '',
+      email: formData.email || '',
+      industry: formData.industry || '',
+      websiteIssues: formData.websiteIssues || [],
+      cms: formData.cms || '',
+      phone: formData.phone || '',
+      socialMedia: {
+        facebook: formData.facebook,
+        linkedin: formData.linkedin,
+        instagram: formData.instagram,
+        twitter: formData.twitter
+      },
+      opportunityScore: formData.opportunityScore || 0,
+      status: formData.status || 'New',
+      projectType: formData.projectType || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    setIsGeneratingDemo(true);
+    setDemoPrompt(null);
+    setFollowUpText(null);
+    try {
+      const result = await generateDemoPrompt(leadObj);
+      setDemoPrompt(result);
+    } catch (err) {
+      console.error("Demo generation failed:", err);
+    } finally {
+      setIsGeneratingDemo(false);
+    }
+  };
+
+  const handleEnrich = async () => {
+    const query = formData.companyName || formData.website;
+    if (!query) return;
+
+    setIsEnriching(true);
+    setEnrichmentStatus('Initializing Neural Audit...');
+    
+    // Status updates simulation while awaiting real data
+    const statuses = [
+      'Scanning Website Source...',
+      'Analyzing Technical Stack...',
+      'Identifying Vulnerabilities...',
+      'Extracting Business Meta-data...',
+      'Calculating Opportunity Score...',
+      'Mapping Digital Presence...'
+    ];
+    
+    let currentStatus = 0;
+    const interval = setInterval(() => {
+      if (currentStatus < statuses.length) {
+        setEnrichmentStatus(statuses[currentStatus]);
+        currentStatus++;
+      }
+    }, 2000);
+
+    try {
+      const data = await enrichLeadData(query);
+      setFormData(prev => ({
+        ...prev,
+        companyName: data.businessName || prev.companyName,
+        website: data.websiteUrl || prev.website,
+        industry: data.industry || prev.industry,
+        email: data.email || prev.email,
+        phone: data.phone || prev.phone,
+        whatsapp: data.whatsapp || prev.whatsapp,
+        facebook: data.socialMedia?.facebook || prev.facebook,
+        linkedin: data.socialMedia?.linkedin || prev.linkedin,
+        instagram: data.socialMedia?.instagram || prev.instagram,
+        twitter: data.socialMedia?.twitter || prev.twitter,
+        cms: data.cms || prev.cms,
+        techStack: data.techStack || prev.techStack,
+        websiteIssues: data.websiteIssues || prev.websiteIssues,
+        auditResults: data.auditResults || prev.auditResults,
+        opportunityScore: data.opportunityScore || prev.opportunityScore,
+        projectType: data.projectType || prev.projectType
+      }));
+      setEnrichmentStatus('Audit Complete!');
+    } catch (err) {
+      console.error("Enrichment failed:", err);
+      setEnrichmentStatus('Audit Interrupted');
+    } finally {
+      clearInterval(interval);
+      setTimeout(() => {
+        setIsEnriching(false);
+        setEnrichmentStatus('');
+      }, 1500);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
       setFormData({
-        id: initialData.id || '',
-        title: initialData.title || '',
+        id: initialData.id,
+        businessName: initialData.businessName || '',
+        companyName: initialData.businessName || initialData.companyName || '',
         status: initialData.status || 'New',
-        companyName: initialData.companyName || '',
         phone: initialData.phone || '',
         email: initialData.email || '',
         whatsapp: initialData.whatsapp || '',
-        facebook: initialData.facebook || '',
-        linkedin: initialData.linkedin || '',
-        instagram: initialData.instagram || '',
-        twitter: initialData.twitter || '',
+        facebook: initialData.socialMedia?.facebook || '',
+        linkedin: initialData.socialMedia?.linkedin || '',
+        instagram: initialData.socialMedia?.instagram || '',
+        twitter: initialData.socialMedia?.twitter || '',
         projectType: initialData.projectType || '',
         clientManager: initialData.clientManager || '',
-        website: initialData.website || '',
-        processingWork: initialData.processingWork || ''
+        website: initialData.websiteUrl || initialData.website || '',
+        processingWork: initialData.processingWork || '',
+        industry: initialData.industry || '',
+        cms: initialData.cms || '',
+        websiteIssues: initialData.websiteIssues || [],
+        techStack: initialData.techStack || [],
+        auditResults: initialData.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
+        opportunityScore: initialData.opportunityScore || 0
       });
     } else {
-      setFormData({
-        id: '',
-        title: '',
-        status: 'New',
-        companyName: '',
-        phone: '',
-        email: '',
-        whatsapp: '',
-        facebook: '',
-        linkedin: '',
-        instagram: '',
-        twitter: '',
-        projectType: '',
-        clientManager: '',
-        website: '',
-        processingWork: ''
-      });
+      // Keep existing data or initialize if first time
+      setFormData(prev => ({
+        ...prev,
+        id: prev.id || '',
+        businessName: prev.businessName || '',
+        companyName: prev.companyName || '',
+        status: prev.status || 'New',
+        phone: prev.phone || '',
+        email: prev.email || '',
+        whatsapp: prev.whatsapp || '',
+        facebook: prev.facebook || '',
+        linkedin: prev.linkedin || '',
+        instagram: prev.instagram || '',
+        twitter: prev.twitter || '',
+        projectType: prev.projectType || '',
+        clientManager: prev.clientManager || '',
+        website: prev.website || '',
+        processingWork: prev.processingWork || '',
+        industry: prev.industry || '',
+        cms: prev.cms || '',
+        websiteIssues: prev.websiteIssues || [],
+        techStack: prev.techStack || [],
+        auditResults: prev.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
+        opportunityScore: prev.opportunityScore || 0
+      }));
     }
   }, [initialData]);
 
@@ -1403,25 +1937,6 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
     e.preventDefault();
     onAdd(formData);
     setShowSuccess(true);
-    if (!initialData) {
-      setFormData({
-        id: '',
-        title: '',
-        status: 'New',
-        companyName: '',
-        phone: '',
-        email: '',
-        whatsapp: '',
-        facebook: '',
-        linkedin: '',
-        instagram: '',
-        twitter: '',
-        projectType: '',
-        clientManager: '',
-        website: '',
-        processingWork: ''
-      });
-    }
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
@@ -1445,22 +1960,48 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
       </AnimatePresence>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <FormInput label="Title" name="title" value={formData.title} onChange={handleChange} required />
+        <div className="space-y-1.5 flex flex-col justify-end">
+           <FormInput label="Title/Ref" name="businessName" value={formData.businessName} onChange={handleChange} required />
+        </div>
         <div className="space-y-1.5">
           <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Status</label>
           <select 
             name="status"
-            value={formData.status}
+            value={formData.status ?? 'New'}
             onChange={handleChange}
             className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 font-bold text-sm"
           >
             <option value="New">New</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Completed">Completed</option>
-            <option value="On Hold">On Hold</option>
+            <option value="Contacted">Contacted</option>
+            <option value="Meeting">Meeting</option>
+            <option value="Proposal">Proposal</option>
+            <option value="Won">Won</option>
+            <option value="Lost">Lost</option>
           </select>
         </div>
-        <FormInput label="Company Name" name="companyName" value={formData.companyName} onChange={handleChange} required />
+        <div className="space-y-1.5 relative flex flex-col justify-end">
+          <FormInput label="Business Name / URL" name="companyName" value={formData.companyName} onChange={handleChange} required />
+          <button 
+            type="button"
+            onClick={handleEnrich}
+            disabled={isEnriching || (!formData.companyName && !formData.website)}
+            className="absolute right-2 bottom-2 px-3 py-1.5 bg-black text-white text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-all flex items-center gap-1.5 min-w-[120px] justify-center"
+          >
+            {isEnriching ? (
+              <>
+                <Loader2 size={10} className="animate-spin" />
+                <span className="truncate max-w-[80px]">{enrichmentStatus || 'Scraping...'}</span>
+              </>
+            ) : (
+              <>
+                <Search size={10} />
+                AI Magic Audit
+              </>
+            )}
+          </button>
+        </div>
+        <FormInput label="Industry" name="industry" value={formData.industry} onChange={handleChange} />
+        <FormInput label="CMS" name="cms" value={formData.cms} onChange={handleChange} />
         <FormInput label="Phone Number" name="phone" value={formData.phone} onChange={handleChange} />
         <FormInput label="Email Address" name="email" value={formData.email} onChange={handleChange} type="email" required />
         <FormInput label="WhatsApp" name="whatsapp" value={formData.whatsapp} onChange={handleChange} />
@@ -1477,7 +2018,7 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
         <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Processing Work (Notes)</label>
         <textarea 
           name="processingWork"
-          value={formData.processingWork}
+          value={formData.processingWork ?? ''}
           onChange={handleChange}
           rows={4}
           className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-black/5 font-medium text-sm leading-relaxed"
@@ -1485,20 +2026,148 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
         />
       </div>
 
-      <div className="pt-4">
-        <button 
-          type="submit"
-          className="w-full md:w-auto px-12 py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl hover:bg-gray-800 transition-all shadow-xl active:scale-95"
-        >
-          {initialData ? 'Update Lead in CRM' : 'Register New Lead'}
-        </button>
+      <div className="pt-4 flex flex-col gap-6">
+        <div className="flex flex-wrap items-center gap-4">
+          <button 
+            type="submit"
+            className="px-12 py-4 bg-black text-white font-black uppercase tracking-widest text-sm rounded-2xl hover:bg-gray-800 transition-all shadow-xl active:scale-95"
+          >
+            {initialData ? 'Update Lead in CRM' : 'Register New Lead'}
+          </button>
+
+          {initialData && (
+            <div className="flex flex-wrap gap-2">
+              <button 
+                type="button"
+                onClick={() => handleGenFollowUp(1)}
+                disabled={isGeneratingFollowUp}
+                className="px-4 py-3 bg-blue-50 text-blue-600 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-blue-100 transition-all flex items-center gap-2 border border-blue-100"
+              >
+                {isGeneratingFollowUp && genStep === 1 ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
+                1st Follow-up
+              </button>
+              <button 
+                type="button"
+                onClick={() => handleGenFollowUp(2)}
+                disabled={isGeneratingFollowUp}
+                className="px-4 py-3 bg-purple-50 text-purple-600 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-purple-100 transition-all flex items-center gap-2 border border-purple-100"
+              >
+                {isGeneratingFollowUp && genStep === 2 ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
+                2nd Follow-up
+              </button>
+              <button 
+                type="button"
+                onClick={() => handleGenFollowUp(3)}
+                disabled={isGeneratingFollowUp}
+                className="px-4 py-3 bg-orange-50 text-orange-600 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-orange-100 transition-all flex items-center gap-2 border border-orange-100"
+              >
+                {isGeneratingFollowUp && genStep === 3 ? <Loader2 size={12} className="animate-spin" /> : <BellOff size={12} />}
+                3rd (Break-up)
+              </button>
+              <button 
+                type="button"
+                onClick={handleGenDemo}
+                disabled={isGeneratingDemo}
+                className="px-4 py-3 bg-white border border-gray-200 text-black font-black uppercase tracking-widest text-[10px] rounded-xl shadow-sm hover:bg-black hover:text-white transition-all flex items-center justify-center gap-2"
+              >
+                {isGeneratingDemo ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                Create Demo
+              </button>
+            </div>
+          )}
+        </div>
+
+        <AnimatePresence>
+          {followUpText && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gray-50 border border-gray-200 rounded-2xl p-6 relative group"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                  AI Generated Follow-up (Sequence #{genStep})
+                </span>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(followUpText);
+                    alert("Message copied to clipboard!");
+                  }}
+                  className="p-2 hover:bg-white rounded-lg text-gray-400 hover:text-black transition-all"
+                  title="Copy Message"
+                >
+                  <Copy size={16} />
+                </button>
+              </div>
+              <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-medium">
+                {followUpText}
+              </p>
+            </motion.div>
+          )}
+
+          {demoPrompt && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 italic">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Visual Audit Summary</div>
+                <div className="text-xs font-medium text-gray-600 leading-relaxed whitespace-pre-line">
+                  {demoPrompt.visualAudit}
+                </div>
+              </div>
+
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Key Improvements</div>
+                <div className="text-xs font-medium text-gray-600 leading-relaxed whitespace-pre-line">
+                  {demoPrompt.keyImprovements}
+                </div>
+              </div>
+              
+              <div className="p-4 bg-gray-900 rounded-2xl overflow-hidden relative group">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 flex justify-between items-center">
+                  <span>Master Prompt for AI Studio</span>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(demoPrompt.masterPrompt);
+                      alert("Prompt copied!");
+                    }}
+                    className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[9px] transition-colors"
+                  >
+                    COPY PROMPT
+                  </button>
+                </div>
+                <div className="text-xs font-mono text-gray-400 line-clamp-4 leading-relaxed bg-black/30 p-3 rounded-xl">
+                  {demoPrompt.masterPrompt}
+                </div>
+              </div>
+
+              <a 
+                href={`https://aistudio.google.com/app/prompts/new?text=${encodeURIComponent(demoPrompt.masterPrompt)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2 group border border-white/10"
+              >
+                <ExternalLink size={16} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                Build Demo on Google AI Studio
+              </a>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </form>
   );
 }
 
-function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string) => void, onEdit: (lead: any) => void, key?: any }) {
+function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: string) => void, onEdit: (lead: any) => void, key?: any }) {
   const [isExpanded, setIsExpanded] = useState(false);
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-emerald-500';
+    if (score >= 50) return 'text-amber-500';
+    return 'text-red-500';
+  };
 
   return (
     <motion.div 
@@ -1509,9 +2178,10 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string
         <div className="flex justify-between items-start mb-4">
           <div className="flex flex-col gap-1">
             <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit ${
-              lead.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
-              lead.status === 'In Progress' ? 'bg-blue-50 text-blue-600' :
-              lead.status === 'On Hold' ? 'bg-amber-50 text-amber-600' :
+              lead.status === 'Won' ? 'bg-emerald-50 text-emerald-600' :
+              lead.status === 'Meeting' ? 'bg-blue-50 text-blue-600' :
+              lead.status === 'Proposal' ? 'bg-purple-50 text-purple-600' :
+              lead.status === 'Lost' ? 'bg-red-50 text-red-600' :
               'bg-gray-100 text-gray-600'
             }`}>
               {lead.status}
@@ -1520,28 +2190,49 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string
               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tight">{lead.industry}</span>
             )}
           </div>
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button 
-              onClick={() => onEdit(lead)}
-              className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black"
-            >
-              <Edit2 size={14} />
-            </button>
-            <button 
-              onClick={() => onDelete(lead.id)}
-              className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-            >
-              <Trash2 size={14} />
-            </button>
+          
+          <div className="flex items-center gap-3">
+             {lead.opportunityScore > 0 && (
+               <div className="flex flex-col items-end">
+                 <div className={`text-lg font-black tracking-tighter ${getScoreColor(lead.opportunityScore)}`}>
+                   {lead.opportunityScore}%
+                 </div>
+                 <div className="text-[8px] font-black uppercase tracking-widest text-gray-300">Opportunity</div>
+               </div>
+             )}
+             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+               <button 
+                 onClick={() => onEdit(lead)}
+                 className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black"
+               >
+                 <Edit2 size={14} />
+               </button>
+               <button 
+                 onClick={() => onDelete(lead.id)}
+                 className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+               >
+                 <Trash2 size={14} />
+               </button>
+             </div>
           </div>
         </div>
 
-        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.companyName || lead.title}</h4>
-        {lead.title && lead.title !== lead.companyName && (
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{lead.title}</p>
+        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.businessName || "Untitled Lead"}</h4>
+        
+        {lead.techStack && lead.techStack.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2 mb-4">
+            {lead.techStack.slice(0, 3).map((tech, idx) => (
+              <span key={idx} className="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[8px] font-black uppercase tracking-widest text-gray-400">
+                {tech}
+              </span>
+            ))}
+            {lead.techStack.length > 3 && (
+              <span className="text-[8px] font-black text-gray-300">+{lead.techStack.length - 3} More</span>
+            )}
+          </div>
         )}
 
-        <div className="space-y-3 pb-4 border-b border-gray-100">
+        <div className="space-y-3 pb-4 border-b border-gray-100 mt-4">
           <div className="flex items-center gap-3 text-xs font-bold text-gray-600 truncate">
             <Mail size={14} className="text-gray-300 shrink-0" /> {lead.email || 'No email provided'}
           </div>
@@ -1560,32 +2251,32 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string
               </a>
             )}
           </div>
-          {lead.website && (
+          {lead.websiteUrl && (
             <div className="flex items-center gap-3 text-xs font-bold text-gray-600 truncate">
-              <Globe size={14} className="text-gray-300 shrink-0" /> {lead.website}
+              <Globe size={14} className="text-gray-300 shrink-0" /> {lead.websiteUrl}
             </div>
           )}
         </div>
 
         <div className="pt-4 flex items-center justify-between gap-4">
           <div className="flex gap-2 shrink-0">
-            {lead.facebook && (
-              <a href={lead.facebook} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
+            {lead.socialMedia?.facebook && (
+              <a href={lead.socialMedia.facebook} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
                 <Facebook size={15} />
               </a>
             )}
-            {lead.linkedin && (
-              <a href={lead.linkedin} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-700 transition-colors">
+            {lead.socialMedia?.linkedin && (
+              <a href={lead.socialMedia.linkedin} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-700 transition-colors">
                 <Linkedin size={15} />
               </a>
             )}
-            {lead.instagram && (
-              <a href={lead.instagram} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
+            {lead.socialMedia?.instagram && (
+              <a href={lead.socialMedia.instagram} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
                 <Instagram size={15} />
               </a>
             )}
-            {lead.twitter && (
-              <a href={lead.twitter} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-black transition-colors">
+            {lead.socialMedia?.twitter && (
+              <a href={lead.socialMedia.twitter} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-black transition-colors">
                 {getTwitterIcon()}
               </a>
             )}
@@ -1606,21 +2297,60 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="pt-6 mt-4 border-t border-gray-100 space-y-4">
+              <div className="pt-6 mt-4 border-t border-gray-100 space-y-6">
+                {lead.auditResults && (
+                  <div className="space-y-4">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">Technical Audit Report</div>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                       <AuditScore label="Performance" score={lead.auditResults.performance} />
+                       <AuditScore label="Security" score={lead.auditResults.security} />
+                       <AuditScore label="SEO" score={lead.auditResults.seo} />
+                       <AuditScore label="UI/UX Design" score={lead.auditResults.design} />
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4">
                   <DetailRow label="Project Type" value={lead.projectType} />
                   <DetailRow label="Client Manager" value={lead.clientManager} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <DetailRow label="CMS" value={lead.cms} />
-                  <DetailRow label="Opportunity Score" value={lead.opportunityScore} />
+                  <DetailRow label="CMS Engine" value={lead.cms} />
+                  <DetailRow label="Lead Score" value={`${lead.opportunityScore}%`} />
                 </div>
-                <DetailRow label="WhatsApp" value={lead.whatsapp} />
-                <DetailRow label="Industry" value={lead.industry} />
+                
+                {lead.techStack && lead.techStack.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Detailed Tech Stack</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {lead.techStack.map((tech, idx) => (
+                        <span key={idx} className="px-2.5 py-1 bg-black text-white text-[9px] font-black uppercase tracking-widest rounded-lg">
+                          {tech}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Processing Work</span>
-                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-xl min-h-[60px]">
-                    {lead.processingWork || 'No processing notes available.'}
+                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Identified Vulnerabilities</span>
+                  <div className="flex flex-wrap gap-2">
+                    {lead.websiteIssues.map((issue, idx) => (
+                      <div key={idx} className="px-3 py-1.5 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+                        <span className="text-[10px] font-bold text-red-700 uppercase tracking-tight">{issue}</span>
+                      </div>
+                    ))}
+                    {lead.websiteIssues.length === 0 && (
+                      <span className="text-xs font-medium text-gray-400 italic">No specific issues identified yet.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Internal Processing Notes</span>
+                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-2xl min-h-[80px] border border-gray-100">
+                    {lead.processingWork || 'Scan complete. No manual notes added.'}
                   </p>
                 </div>
               </div>
@@ -1629,6 +2359,31 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string
         </AnimatePresence>
       </div>
     </motion.div>
+  );
+}
+
+function AuditScore({ label, score }: { label: string, score: number }) {
+  const getColor = (s: number) => {
+    if (s >= 90) return 'bg-emerald-500';
+    if (s >= 75) return 'bg-blue-500';
+    if (s >= 50) return 'bg-amber-500';
+    return 'bg-red-500';
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+        <span className={`text-xs font-black ${score >= 90 ? 'text-emerald-600' : score <= 50 ? 'text-red-600' : 'text-gray-900'}`}>{score}</span>
+      </div>
+      <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+        <motion.div 
+          initial={{ width: 0 }}
+          animate={{ width: `${score}%` }}
+          className={`h-full rounded-full ${getColor(score)} transition-all duration-1000`}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -1650,7 +2405,7 @@ function FormInput({ label, name, value, onChange, type = "text", required = fal
       <input 
         type={type}
         name={name}
-        value={value}
+        value={value ?? ''}
         onChange={onChange}
         required={required}
         className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 font-bold text-sm transition-all"
