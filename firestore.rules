@@ -33,19 +33,16 @@ service cloud.firestore {
 
     // Phase 4: Validation Blueprints
     function isValidLead(data) {
-      return data.keys().hasAll(['userId', 'createdAt'])
+      return data.keys().hasAll(['companyName', 'userId', 'createdAt'])
+        && data.companyName is string && data.companyName.size() <= 256
         && data.userId is string && data.userId.size() <= 128
         && data.createdAt is timestamp
-        && (!('businessName' in data) || (data.businessName is string && data.businessName.size() <= 256))
-        && (!('companyName' in data) || (data.companyName is string && data.companyName.size() <= 256))
         && (!('title' in data) || (data.title is string && data.title.size() <= 256))
-        && (!('websiteUrl' in data) || (data.websiteUrl is string && data.websiteUrl.size() <= 512))
         && (!('website' in data) || (data.website is string && data.website.size() <= 512))
         && (!('industry' in data) || (data.industry is string && data.industry.size() <= 128))
         && (!('email' in data) || (data.email is string && data.email.size() <= 128))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 64))
         && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 64))
-        && (!('socialMedia' in data) || (data.socialMedia is map))
         && (!('facebook' in data) || (data.facebook is string && data.facebook.size() <= 512))
         && (!('linkedin' in data) || (data.linkedin is string && data.linkedin.size() <= 512))
         && (!('instagram' in data) || (data.instagram is string && data.instagram.size() <= 512))
@@ -55,9 +52,7 @@ service cloud.firestore {
         && (!('processingWork' in data) || (data.processingWork is string && data.processingWork.size() <= 5000))
         && (!('opportunityScore' in data) || (data.opportunityScore is number))
         && (!('cms' in data) || (data.cms is string && data.cms.size() <= 128))
-        && (!('techStack' in data) || (data.techStack is list))
         && (!('websiteIssues' in data) || (data.websiteIssues is list))
-        && (!('auditResults' in data) || (data.auditResults is map))
         && (!('status' in data) || (data.status is string && data.status.size() <= 64));
     }
 
@@ -95,12 +90,10 @@ service cloud.firestore {
           && (
             // Action: Edit Any Lead Field
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'businessName', 'companyName', 'title', 'websiteUrl', 'website', 
-              'industry', 'email', 'phone', 'whatsapp', 'socialMedia',
-              'facebook', 'linkedin', 'instagram', 'twitter', 
+              'title', 'companyName', 'website', 'industry', 'email', 'phone', 
+              'whatsapp', 'facebook', 'linkedin', 'instagram', 'twitter', 
               'projectType', 'clientManager', 'processingWork', 'opportunityScore', 
-              'techStack', 'websiteIssues', 'auditResults',
-              'cms', 'status', 'updatedAt'
+              'cms', 'status', 'websiteIssues', 'updatedAt'
             ])
             && (incoming().updatedAt == request.time)
           );

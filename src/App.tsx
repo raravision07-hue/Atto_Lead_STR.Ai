@@ -16,6 +16,7 @@ import {
   Facebook,
   Linkedin,
   Instagram,
+  Eye,
   LayoutDashboard,
   Users,
   Briefcase,
@@ -164,31 +165,19 @@ export default function App() {
   const handleAddLead = async (newLead: any) => {
     if (!user) return;
     const path = `users/${user.uid}/leads`;
-    
-    // Clean data to avoid Firestore 'undefined' crash
-    const sanitize = (obj: any) => {
-      const cleaned: any = {};
-      Object.keys(obj).forEach(key => {
-        if (obj[key] !== undefined) {
-          cleaned[key] = obj[key];
-        }
-      });
-      return cleaned;
-    };
-
     try {
       if (newLead.id && storedLeads.some(l => l.id === newLead.id)) {
         // Update existing
         const { id, ...updateData } = newLead;
         await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
-          ...sanitize(updateData),
+          ...updateData,
           updatedAt: serverTimestamp()
         });
       } else {
         // Create new
         const { id: _, ...createData } = newLead;
         await addDoc(collection(db, path), {
-          ...sanitize(createData),
+          ...createData,
           userId: user.uid,
           status: createData.status || 'New',
           industry: createData.industry || '',
@@ -206,21 +195,10 @@ export default function App() {
   const handleUpdateLead = async (updatedLead: any) => {
     if (!user) return;
     const path = `users/${user.uid}/leads/${updatedLead.id}`;
-    
-    const sanitize = (obj: any) => {
-      const cleaned: any = {};
-      Object.keys(obj).forEach(key => {
-        if (obj[key] !== undefined) {
-          cleaned[key] = obj[key];
-        }
-      });
-      return cleaned;
-    };
-
     try {
       const { id, ...data } = updatedLead;
       await updateDoc(doc(db, 'users', user.uid, 'leads', id), {
-        ...sanitize(data),
+        ...data,
         updatedAt: serverTimestamp()
       });
     } catch (error) {
@@ -908,6 +886,7 @@ Notes: ${l.processingWork || 'None'}
                         <tr className="bg-gray-50/50">
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Business Asset</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Web Vulnerabilities</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Live</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Opportunity</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Audit</th>
                         </tr>
@@ -915,13 +894,13 @@ Notes: ${l.processingWork || 'None'}
                       <tbody className="divide-y divide-gray-100">
                         {leads.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="px-6 py-20 text-center text-gray-400 text-sm">No discovery results yet.</td>
+                            <td colSpan={5} className="px-6 py-20 text-center text-gray-400 text-sm">No discovery results yet.</td>
                           </tr>
                         ) : (
-                          leads.map((lead) => (
+                          leads.map((lead, index) => (
                             <tr key={lead.id} className="hover:bg-gray-50/80 transition-colors group">
                               <td className="px-6 py-5">
-                                <div className="font-bold text-gray-900 leading-tight mb-0.5">{lead.businessName}</div>
+                                <div className="font-bold text-gray-900 leading-tight mb-0.5">{index + 1}. {lead.businessName}</div>
                                 <div className="text-[10px] font-bold text-gray-400 flex items-center gap-1 uppercase tracking-tight">
                                   <Globe size={10} className="text-gray-300" /> {lead.websiteUrl.replace(/https?:\/\/(www\.)?/, '')}
                                 </div>
@@ -934,6 +913,17 @@ Notes: ${l.processingWork || 'None'}
                                     </span>
                                   ))}
                                 </div>
+                              </td>
+                              <td className="px-6 py-5 text-center">
+                                <a 
+                                  href={lead.websiteUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gray-50 text-gray-400 hover:text-black hover:bg-gray-100 transition-all shadow-sm group-hover:scale-110"
+                                  title="Visit Live Website"
+                                >
+                                  <Eye size={16} />
+                                </a>
                               </td>
                               <td className="px-6 py-5">
                                 <div className={`inline-flex items-center px-3 py-1 rounded-md text-[10px] font-black border ${getScoreColor(lead.opportunityScore)} tracking-widest`}>
@@ -960,11 +950,21 @@ Notes: ${l.processingWork || 'None'}
                     {leads.length === 0 ? (
                       <div className="px-6 py-20 text-center text-gray-400 text-sm">No discovery results yet.</div>
                     ) : (
-                      leads.map((lead) => (
+                      leads.map((lead, index) => (
                         <div key={lead.id} className="p-4 space-y-4 hover:bg-gray-50">
                           <div className="flex justify-between items-start">
                             <div className="flex-1 min-w-0">
-                              <div className="font-bold text-gray-900 truncate">{lead.businessName}</div>
+                              <div className="font-bold text-gray-900 truncate flex items-center gap-2">
+                                {index + 1}. {lead.businessName}
+                                <a 
+                                  href={lead.websiteUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-emerald-500 hover:text-emerald-600 transition-colors"
+                                >
+                                  <Eye size={14} />
+                                </a>
+                              </div>
                               <div className="text-[10px] font-bold text-gray-400 truncate uppercase mt-1">
                                 {lead.websiteUrl.replace(/https?:\/\/(www\.)?/, '')}
                               </div>
@@ -1715,32 +1715,28 @@ Notes: ${l.processingWork || 'None'}
 }
 
 function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initialData?: any }) {
-  const [formData, setFormData] = useState<any>({
+  const [formData, setFormData] = useState({
     id: initialData?.id || '',
-    businessName: initialData?.businessName || '',
+    title: initialData?.title || '',
     status: initialData?.status || 'New',
-    companyName: initialData?.businessName || initialData?.companyName || '',
+    companyName: initialData?.companyName || '',
     phone: initialData?.phone || '',
     email: initialData?.email || '',
     whatsapp: initialData?.whatsapp || '',
-    facebook: initialData?.socialMedia?.facebook || '',
-    linkedin: initialData?.socialMedia?.linkedin || '',
-    instagram: initialData?.socialMedia?.instagram || '',
-    twitter: initialData?.socialMedia?.twitter || '',
+    facebook: initialData?.facebook || '',
+    linkedin: initialData?.linkedin || '',
+    instagram: initialData?.instagram || '',
+    twitter: initialData?.twitter || '',
     projectType: initialData?.projectType || '',
     clientManager: initialData?.clientManager || '',
-    website: initialData?.websiteUrl || initialData?.website || '',
+    website: initialData?.website || '',
     processingWork: initialData?.processingWork || '',
     industry: initialData?.industry || '',
     cms: initialData?.cms || '',
-    websiteIssues: initialData?.websiteIssues || [],
-    techStack: initialData?.techStack || [],
-    auditResults: initialData?.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
-    opportunityScore: initialData?.opportunityScore || 0
+    websiteIssues: initialData?.websiteIssues || []
   });
   const [showSuccess, setShowSuccess] = useState(false);
   const [isEnriching, setIsEnriching] = useState(false);
-  const [enrichmentStatus, setEnrichmentStatus] = useState<string>('');
   const [followUpText, setFollowUpText] = useState<string | null>(null);
   const [demoPrompt, setDemoPrompt] = useState<DemoPromptResult | null>(null);
   const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false);
@@ -1750,7 +1746,7 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
   const handleGenFollowUp = async (step: number) => {
     const leadObj: Lead = {
       id: formData.id,
-      businessName: formData.companyName || '',
+      businessName: formData.companyName || formData.title || '',
       websiteUrl: formData.website || '',
       email: formData.email || '',
       industry: formData.industry || '',
@@ -1787,7 +1783,7 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
   const handleGenDemo = async () => {
     const leadObj: Lead = {
       id: formData.id,
-      businessName: formData.companyName || '',
+      businessName: formData.companyName || formData.title || '',
       websiteUrl: formData.website || '',
       email: formData.email || '',
       industry: formData.industry || '',
@@ -1821,30 +1817,10 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
   };
 
   const handleEnrich = async () => {
-    const query = formData.companyName || formData.website;
+    const query = formData.companyName || formData.website || formData.title;
     if (!query) return;
 
     setIsEnriching(true);
-    setEnrichmentStatus('Initializing Neural Audit...');
-    
-    // Status updates simulation while awaiting real data
-    const statuses = [
-      'Scanning Website Source...',
-      'Analyzing Technical Stack...',
-      'Identifying Vulnerabilities...',
-      'Extracting Business Meta-data...',
-      'Calculating Opportunity Score...',
-      'Mapping Digital Presence...'
-    ];
-    
-    let currentStatus = 0;
-    const interval = setInterval(() => {
-      if (currentStatus < statuses.length) {
-        setEnrichmentStatus(statuses[currentStatus]);
-        currentStatus++;
-      }
-    }, 2000);
-
     try {
       const data = await enrichLeadData(query);
       setFormData(prev => ({
@@ -1860,76 +1836,58 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
         instagram: data.socialMedia?.instagram || prev.instagram,
         twitter: data.socialMedia?.twitter || prev.twitter,
         cms: data.cms || prev.cms,
-        techStack: data.techStack || prev.techStack,
-        websiteIssues: data.websiteIssues || prev.websiteIssues,
-        auditResults: data.auditResults || prev.auditResults,
-        opportunityScore: data.opportunityScore || prev.opportunityScore,
         projectType: data.projectType || prev.projectType
       }));
-      setEnrichmentStatus('Audit Complete!');
     } catch (err) {
       console.error("Enrichment failed:", err);
-      setEnrichmentStatus('Audit Interrupted');
     } finally {
-      clearInterval(interval);
-      setTimeout(() => {
-        setIsEnriching(false);
-        setEnrichmentStatus('');
-      }, 1500);
+      setIsEnriching(false);
     }
   };
 
   useEffect(() => {
     if (initialData) {
       setFormData({
-        id: initialData.id,
-        businessName: initialData.businessName || '',
-        companyName: initialData.businessName || initialData.companyName || '',
+        id: initialData.id || '',
+        title: initialData.title || '',
         status: initialData.status || 'New',
+        companyName: initialData.companyName || '',
         phone: initialData.phone || '',
         email: initialData.email || '',
         whatsapp: initialData.whatsapp || '',
-        facebook: initialData.socialMedia?.facebook || '',
-        linkedin: initialData.socialMedia?.linkedin || '',
-        instagram: initialData.socialMedia?.instagram || '',
-        twitter: initialData.socialMedia?.twitter || '',
+        facebook: initialData.facebook || '',
+        linkedin: initialData.linkedin || '',
+        instagram: initialData.instagram || '',
+        twitter: initialData.twitter || '',
         projectType: initialData.projectType || '',
         clientManager: initialData.clientManager || '',
-        website: initialData.websiteUrl || initialData.website || '',
+        website: initialData.website || '',
         processingWork: initialData.processingWork || '',
         industry: initialData.industry || '',
         cms: initialData.cms || '',
-        websiteIssues: initialData.websiteIssues || [],
-        techStack: initialData.techStack || [],
-        auditResults: initialData.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
-        opportunityScore: initialData.opportunityScore || 0
+        websiteIssues: initialData.websiteIssues || []
       });
     } else {
-      // Keep existing data or initialize if first time
-      setFormData(prev => ({
-        ...prev,
-        id: prev.id || '',
-        businessName: prev.businessName || '',
-        companyName: prev.companyName || '',
-        status: prev.status || 'New',
-        phone: prev.phone || '',
-        email: prev.email || '',
-        whatsapp: prev.whatsapp || '',
-        facebook: prev.facebook || '',
-        linkedin: prev.linkedin || '',
-        instagram: prev.instagram || '',
-        twitter: prev.twitter || '',
-        projectType: prev.projectType || '',
-        clientManager: prev.clientManager || '',
-        website: prev.website || '',
-        processingWork: prev.processingWork || '',
-        industry: prev.industry || '',
-        cms: prev.cms || '',
-        websiteIssues: prev.websiteIssues || [],
-        techStack: prev.techStack || [],
-        auditResults: prev.auditResults || { performance: 0, security: 0, seo: 0, design: 0 },
-        opportunityScore: prev.opportunityScore || 0
-      }));
+      setFormData({
+        id: '',
+        title: '',
+        status: 'New',
+        companyName: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        facebook: '',
+        linkedin: '',
+        instagram: '',
+        twitter: '',
+        projectType: '',
+        clientManager: '',
+        website: '',
+        processingWork: '',
+        industry: '',
+        cms: '',
+        websiteIssues: []
+      });
     }
   }, [initialData]);
 
@@ -1937,6 +1895,28 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
     e.preventDefault();
     onAdd(formData);
     setShowSuccess(true);
+    if (!initialData) {
+      setFormData({
+        id: '',
+        title: '',
+        status: 'New',
+        companyName: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        facebook: '',
+        linkedin: '',
+        instagram: '',
+        twitter: '',
+        projectType: '',
+        clientManager: '',
+        website: '',
+        processingWork: '',
+        industry: '',
+        cms: '',
+        websiteIssues: []
+      });
+    }
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
@@ -1961,7 +1941,7 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="space-y-1.5 flex flex-col justify-end">
-           <FormInput label="Title/Ref" name="businessName" value={formData.businessName} onChange={handleChange} required />
+           <FormInput label="Title/Ref" name="title" value={formData.title} onChange={handleChange} required />
         </div>
         <div className="space-y-1.5">
           <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Status</label>
@@ -1985,19 +1965,10 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
             type="button"
             onClick={handleEnrich}
             disabled={isEnriching || (!formData.companyName && !formData.website)}
-            className="absolute right-2 bottom-2 px-3 py-1.5 bg-black text-white text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-all flex items-center gap-1.5 min-w-[120px] justify-center"
+            className="absolute right-2 bottom-2 px-3 py-1.5 bg-black text-white text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-all flex items-center gap-1.5"
           >
-            {isEnriching ? (
-              <>
-                <Loader2 size={10} className="animate-spin" />
-                <span className="truncate max-w-[80px]">{enrichmentStatus || 'Scraping...'}</span>
-              </>
-            ) : (
-              <>
-                <Search size={10} />
-                AI Magic Audit
-              </>
-            )}
+            {isEnriching ? <Loader2 size={10} className="animate-spin" /> : <Search size={10} />}
+            AI Magic Fill
           </button>
         </div>
         <FormInput label="Industry" name="industry" value={formData.industry} onChange={handleChange} />
@@ -2160,14 +2131,8 @@ function AddLeadForm({ onAdd, initialData }: { onAdd: (lead: any) => void, initi
   );
 }
 
-function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: string) => void, onEdit: (lead: any) => void, key?: any }) {
+function LeadCard({ lead, onDelete, onEdit }: { lead: any, onDelete: (id: string) => void, onEdit: (lead: any) => void, key?: any }) {
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-emerald-500';
-    if (score >= 50) return 'text-amber-500';
-    return 'text-red-500';
-  };
 
   return (
     <motion.div 
@@ -2178,10 +2143,9 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: strin
         <div className="flex justify-between items-start mb-4">
           <div className="flex flex-col gap-1">
             <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit ${
-              lead.status === 'Won' ? 'bg-emerald-50 text-emerald-600' :
-              lead.status === 'Meeting' ? 'bg-blue-50 text-blue-600' :
-              lead.status === 'Proposal' ? 'bg-purple-50 text-purple-600' :
-              lead.status === 'Lost' ? 'bg-red-50 text-red-600' :
+              lead.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' :
+              lead.status === 'In Progress' ? 'bg-blue-50 text-blue-600' :
+              lead.status === 'On Hold' ? 'bg-amber-50 text-amber-600' :
               'bg-gray-100 text-gray-600'
             }`}>
               {lead.status}
@@ -2190,49 +2154,28 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: strin
               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tight">{lead.industry}</span>
             )}
           </div>
-          
-          <div className="flex items-center gap-3">
-             {lead.opportunityScore > 0 && (
-               <div className="flex flex-col items-end">
-                 <div className={`text-lg font-black tracking-tighter ${getScoreColor(lead.opportunityScore)}`}>
-                   {lead.opportunityScore}%
-                 </div>
-                 <div className="text-[8px] font-black uppercase tracking-widest text-gray-300">Opportunity</div>
-               </div>
-             )}
-             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-               <button 
-                 onClick={() => onEdit(lead)}
-                 className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black"
-               >
-                 <Edit2 size={14} />
-               </button>
-               <button 
-                 onClick={() => onDelete(lead.id)}
-                 className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
-               >
-                 <Trash2 size={14} />
-               </button>
-             </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button 
+              onClick={() => onEdit(lead)}
+              className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-black"
+            >
+              <Edit2 size={14} />
+            </button>
+            <button 
+              onClick={() => onDelete(lead.id)}
+              className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500"
+            >
+              <Trash2 size={14} />
+            </button>
           </div>
         </div>
 
-        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.businessName || "Untitled Lead"}</h4>
-        
-        {lead.techStack && lead.techStack.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2 mb-4">
-            {lead.techStack.slice(0, 3).map((tech, idx) => (
-              <span key={idx} className="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[8px] font-black uppercase tracking-widest text-gray-400">
-                {tech}
-              </span>
-            ))}
-            {lead.techStack.length > 3 && (
-              <span className="text-[8px] font-black text-gray-300">+{lead.techStack.length - 3} More</span>
-            )}
-          </div>
+        <h4 className="text-xl font-black text-gray-900 leading-tight mb-1">{lead.companyName || lead.title}</h4>
+        {lead.title && lead.title !== lead.companyName && (
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{lead.title}</p>
         )}
 
-        <div className="space-y-3 pb-4 border-b border-gray-100 mt-4">
+        <div className="space-y-3 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3 text-xs font-bold text-gray-600 truncate">
             <Mail size={14} className="text-gray-300 shrink-0" /> {lead.email || 'No email provided'}
           </div>
@@ -2251,32 +2194,43 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: strin
               </a>
             )}
           </div>
-          {lead.websiteUrl && (
-            <div className="flex items-center gap-3 text-xs font-bold text-gray-600 truncate">
-              <Globe size={14} className="text-gray-300 shrink-0" /> {lead.websiteUrl}
+          {lead.website && (
+            <div className="flex items-center justify-between text-xs font-bold text-gray-600 truncate group/web">
+              <div className="flex items-center gap-3 truncate">
+                <Globe size={14} className="text-gray-300 shrink-0" /> {lead.website}
+              </div>
+              <a 
+                href={lead.website} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="p-1 hover:bg-gray-100 rounded text-emerald-500 transition-colors opacity-0 group-hover/web:opacity-100"
+                title="Visit Website"
+              >
+                <Eye size={12} />
+              </a>
             </div>
           )}
         </div>
 
         <div className="pt-4 flex items-center justify-between gap-4">
           <div className="flex gap-2 shrink-0">
-            {lead.socialMedia?.facebook && (
-              <a href={lead.socialMedia.facebook} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
+            {lead.facebook && (
+              <a href={lead.facebook} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600 transition-colors">
                 <Facebook size={15} />
               </a>
             )}
-            {lead.socialMedia?.linkedin && (
-              <a href={lead.socialMedia.linkedin} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-700 transition-colors">
+            {lead.linkedin && (
+              <a href={lead.linkedin} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-700 transition-colors">
                 <Linkedin size={15} />
               </a>
             )}
-            {lead.socialMedia?.instagram && (
-              <a href={lead.socialMedia.instagram} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
+            {lead.instagram && (
+              <a href={lead.instagram} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-pink-600 transition-colors">
                 <Instagram size={15} />
               </a>
             )}
-            {lead.socialMedia?.twitter && (
-              <a href={lead.socialMedia.twitter} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-black transition-colors">
+            {lead.twitter && (
+              <a href={lead.twitter} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-black transition-colors">
                 {getTwitterIcon()}
               </a>
             )}
@@ -2297,60 +2251,21 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: strin
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="pt-6 mt-4 border-t border-gray-100 space-y-6">
-                {lead.auditResults && (
-                  <div className="space-y-4">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">Technical Audit Report</div>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                       <AuditScore label="Performance" score={lead.auditResults.performance} />
-                       <AuditScore label="Security" score={lead.auditResults.security} />
-                       <AuditScore label="SEO" score={lead.auditResults.seo} />
-                       <AuditScore label="UI/UX Design" score={lead.auditResults.design} />
-                    </div>
-                  </div>
-                )}
-
+              <div className="pt-6 mt-4 border-t border-gray-100 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <DetailRow label="Project Type" value={lead.projectType} />
                   <DetailRow label="Client Manager" value={lead.clientManager} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <DetailRow label="CMS Engine" value={lead.cms} />
-                  <DetailRow label="Lead Score" value={`${lead.opportunityScore}%`} />
+                  <DetailRow label="CMS" value={lead.cms} />
+                  <DetailRow label="Opportunity Score" value={lead.opportunityScore} />
                 </div>
-                
-                {lead.techStack && lead.techStack.length > 0 && (
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Detailed Tech Stack</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {lead.techStack.map((tech, idx) => (
-                        <span key={idx} className="px-2.5 py-1 bg-black text-white text-[9px] font-black uppercase tracking-widest rounded-lg">
-                          {tech}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
+                <DetailRow label="WhatsApp" value={lead.whatsapp} />
+                <DetailRow label="Industry" value={lead.industry} />
                 <div className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Identified Vulnerabilities</span>
-                  <div className="flex flex-wrap gap-2">
-                    {lead.websiteIssues.map((issue, idx) => (
-                      <div key={idx} className="px-3 py-1.5 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-                        <span className="text-[10px] font-bold text-red-700 uppercase tracking-tight">{issue}</span>
-                      </div>
-                    ))}
-                    {lead.websiteIssues.length === 0 && (
-                      <span className="text-xs font-medium text-gray-400 italic">No specific issues identified yet.</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Internal Processing Notes</span>
-                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-2xl min-h-[80px] border border-gray-100">
-                    {lead.processingWork || 'Scan complete. No manual notes added.'}
+                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Processing Work</span>
+                  <p className="text-xs font-medium text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-xl min-h-[60px]">
+                    {lead.processingWork || 'No processing notes available.'}
                   </p>
                 </div>
               </div>
@@ -2359,31 +2274,6 @@ function LeadCard({ lead, onDelete, onEdit }: { lead: Lead, onDelete: (id: strin
         </AnimatePresence>
       </div>
     </motion.div>
-  );
-}
-
-function AuditScore({ label, score }: { label: string, score: number }) {
-  const getColor = (s: number) => {
-    if (s >= 90) return 'bg-emerald-500';
-    if (s >= 75) return 'bg-blue-500';
-    if (s >= 50) return 'bg-amber-500';
-    return 'bg-red-500';
-  };
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex justify-between items-center">
-        <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">{label}</span>
-        <span className={`text-xs font-black ${score >= 90 ? 'text-emerald-600' : score <= 50 ? 'text-red-600' : 'text-gray-900'}`}>{score}</span>
-      </div>
-      <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-        <motion.div 
-          initial={{ width: 0 }}
-          animate={{ width: `${score}%` }}
-          className={`h-full rounded-full ${getColor(score)} transition-all duration-1000`}
-        />
-      </div>
-    </div>
   );
 }
 

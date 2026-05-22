@@ -53,14 +53,6 @@ export interface Lead {
   websiteIssues: string[];
   opportunityScore: number;
   cms: string;
-  techStack?: string[];
-  competitors?: string[];
-  auditResults?: {
-    performance: number;
-    security: number;
-    seo: number;
-    design: number;
-  };
   status: 'New' | 'Contacted' | 'Meeting' | 'Proposal' | 'Won' | 'Lost';
   projectType: string;
   clientManager?: string;
@@ -71,17 +63,23 @@ export interface Lead {
 }
 
 export async function searchLeads(niche: string, location: string, count: number = 5): Promise<Lead[]> {
-  const prompt = `Perform a high-level strategic search for businesses in the "${niche}" industry in "${location}".
-  Target: Businesses that need a digital transformation.
-  Required Detail for each:
-  - Business Name & Website
-  - Industry, Email, Phone
-  - Tech Stack (detected CMS, Analytics, Pixels)
-  - 3-5 Audit Issues (Security, Speed, UI/UX)
-  - Opportunity Score (1-100)
-  - Audit Scores (0-100) for Performance, Security, SEO, Design
+  const prompt = `Perform a deep web search for active businesses in the "${niche}" industry located in "${location}".
+  Criteria:
+  1. The business MUST use WordPress (this is critical).
+  2. The website should have visible issues (design, speed, security, etc.).
+  3. The business should have an active social media presence.
   
-  Return as a clean JSON array matching the Lead interface schema.`;
+  For each of the ${count} businesses found, provide:
+  - Accurate Business Name
+  - Website URL
+  - Contact Email (actual or inferred based on domain)
+  - Phone Number
+  - Social Media Links
+  - At least 3 specific website issues found. IMPORTANT: Write these as concise, professional labels (e.g., "Mobile Optimization Gap", "Legacy UI Architecture", "Performance Latency", "SSL Security Vulnerability"). Avoid long sentences.
+  - Opportunity Score (1-10) based on how desperately they need a redesign/optimization
+  
+  Return the results as a clean JSON array matching the specified schema.
+  Use Google Search to verify current status.`;
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
@@ -114,19 +112,6 @@ export async function searchLeads(niche: string, location: string, count: number
                 items: { type: Type.STRING }
               },
               opportunityScore: { type: Type.NUMBER },
-              auditResults: {
-                type: Type.OBJECT,
-                properties: {
-                  performance: { type: Type.NUMBER },
-                  security: { type: Type.NUMBER },
-                  seo: { type: Type.NUMBER },
-                  design: { type: Type.NUMBER },
-                }
-              },
-              techStack: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
               cms: { type: Type.STRING },
               projectType: { type: Type.STRING },
               details: { type: Type.STRING }
@@ -224,20 +209,8 @@ export async function generateFollowUp(lead: Lead, step: number = 1): Promise<st
 }
 
 export async function enrichLeadData(query: string): Promise<Partial<Lead>> {
-  const prompt = `Perform an advanced digital audit for "${query}". 
-  Your goal is to extract professional business details and technical website meta-data.
-  
-  Extract:
-  1. Core Business Info (Name, Website, Industry, Contact, Socials)
-  2. Technical Stack (Detection of CMS, Tracking Pixels, Analytics, etc.)
-  3. Strategic Audit (Security vulnerabilities, Performance issues, SEO gaps)
-  4. Strategic Scoring:
-     - Performance Score (0-100)
-     - Security Score (0-100)
-     - SEO Score (0-100)
-     - Design Score (0-100)
-     - Overall Opportunity Score (1-100)
-  
+  const prompt = `Find professional business details for "${query}". 
+  Include social media (Facebook, LinkedIn, Instagram, Twitter), CMS, industry, and contact info.
   Return as a clean JSON object matching the Lead interface schema.`;
 
   try {
@@ -265,24 +238,6 @@ export async function enrichLeadData(query: string): Promise<Partial<Lead>> {
               }
             },
             cms: { type: Type.STRING },
-            techStack: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            websiteIssues: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            auditResults: {
-              type: Type.OBJECT,
-              properties: {
-                performance: { type: Type.NUMBER },
-                security: { type: Type.NUMBER },
-                seo: { type: Type.NUMBER },
-                design: { type: Type.NUMBER },
-              }
-            },
-            opportunityScore: { type: Type.NUMBER },
             projectType: { type: Type.STRING }
           }
         },
